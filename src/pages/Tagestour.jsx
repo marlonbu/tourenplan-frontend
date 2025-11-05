@@ -12,7 +12,7 @@ import L from "leaflet";
 
 // ---------- Fester Startpunkt (Firma) ----------
 const START_ADRESSE = "Hans Gehlenborg GmbH, Fehnstraße 3, 49699 Lindern";
-// Fixe Koordinaten (lat, lng) – OSM
+// Fixe Koordinaten (lat, lng) – wie gewünscht per OSM
 const FIRMA_COORDS = [52.8413511, 7.7705647];
 const GMAPS_ORIGIN = `${FIRMA_COORDS[0]},${FIRMA_COORDS[1]}`;
 
@@ -129,9 +129,8 @@ export default function Tagestour() {
   const [saveState, setSaveState] = useState({}); // { [id]: "saving"|"saved"|"error"|"idle" }
   const timersRef = useRef({}); // Debounce Timer je Stopp-ID
 
-  // Foto-Upload/Löschen Status und ausgewählte Datei je Stopp
-  const [fileByStopp, setFileByStopp] = useState({}); // { [id]: File }
-  const [photoState, setPhotoState] = useState({}); // { [id]: "idle"|"uploading"|"deleting"|"error" }
+  // Foto-Upload Status je Stopp
+  const [fotoState, setFotoState] = useState({}); // { [id]: "idle"|"uploading"|"error"|"deleting" }
 
   useEffect(() => {
     ladeFahrer();
@@ -155,6 +154,7 @@ export default function Tagestour() {
 
     setLoading(true);
     setSaveState({});
+    setFotoState({});
     setRouteCoords([]);
     setMarkerCoords([]);
     setGeoStopps([]);
@@ -219,7 +219,6 @@ export default function Tagestour() {
 
   // Eingabe-Handler für "Anmerkung Fahrer" (Autosave)
   function handleAnmerkungChange(id, value) {
-    // UI sofort aktualisieren
     setStopps((prev) =>
       prev.map((s) => (s.id === id ? { ...s, anmerkung_fahrer: value } : s))
     );
@@ -246,44 +245,34 @@ export default function Tagestour() {
     }
   }
 
-  // Foto UI: Datei auswählen
-  function onSelectPhoto(stoppId, file) {
-    setFileByStopp((m) => ({ ...m, [stoppId]: file || null }));
-  }
-
-  // Foto hochladen (bestehender Backend-Endpunkt /stopps/:id/foto)
-  async function uploadFoto(stoppId) {
-    const file = fileByStopp[stoppId];
-    if (!file) {
-      alert("Bitte zuerst ein Foto auswählen.");
-      return;
-    }
+  // ---------- Foto-Upload / Löschen (UI-Variante A: nutzt bestehende Endpunkte) ----------
+  async function handleFotoUpload(stoppId, file) {
+    if (!file) return;
     try {
-      setPhotoState((s) => ({ ...s, [stoppId]: "uploading" }));
-      const updated = await api.uploadStoppFoto(stoppId, file);
-      // Stopp in der Liste aktualisieren
-      setStopps((prev) => prev.map((s) => (s.id === stoppId ? updated : s)));
-      // Auswahl leeren
-      setFileByStopp((m) => ({ ...m, [stoppId]: null }));
-      setPhotoState((s) => ({ ...s, [stoppId]: "idle" }));
+      setFotoState((st) => ({ ...st, [stoppId]: "uploading" }));
+      const updated = await api.uploadStoppFoto(stoppId, file); // nutzt /stopps/:id/foto
+      // Stopp im State ersetzen (bekommst aktualisierte foto_url zurück)
+      setStopps((prev) => prev.map((s) => (s.id === stoppId ? { ...s, ...updated } : s)));
+      setFotoState((st) => ({ ...st, [stoppId]: "idle" }));
     } catch (err) {
       console.error("Foto-Upload fehlgeschlagen:", err);
-      setPhotoState((s) => ({ ...s, [stoppId]: "error" }));
+      setFotoState((st) => ({ ...st, [stoppId]: "error" }));
+      alert("❌ Foto-Upload fehlgeschlagen.");
     }
   }
 
-  // Foto löschen (bestehender Backend-Endpunkt /stopps/:id/foto DELETE)
-  async function deleteFoto(stoppId) {
-    const ok = window.confirm("Foto wirklich löschen?");
+  async function handleFotoDelete(stoppId) {
+    const ok = window.confirm("Foto wirklich entfernen?");
     if (!ok) return;
     try {
-      setPhotoState((s) => ({ ...s, [stoppId]: "deleting" }));
-      const updated = await api.deleteStoppFoto(stoppId);
-      setStopps((prev) => prev.map((s) => (s.id === stoppId ? updated : s)));
-      setPhotoState((s) => ({ ...s, [stoppId]: "idle" }));
+      setFotoState((st) => ({ ...st, [stoppId]: "deleting" }));
+      const updated = await api.deleteStoppFoto(stoppId); // nutzt /stopps/:id/foto (DELETE)
+      setStopps((prev) => prev.map((s) => (s.id === stoppId ? { ...s, ...updated } : s)));
+      setFotoState((st) => ({ ...st, [stoppId]: "idle" }));
     } catch (err) {
       console.error("Foto-Löschen fehlgeschlagen:", err);
-      setPhotoState((s) => ({ ...s, [stoppId]: "error" }));
+      setFotoState((st) => ({ ...st, [stoppId]: "error" }));
+      alert("❌ Foto konnte nicht gelöscht werden.");
     }
   }
 
@@ -366,7 +355,7 @@ export default function Tagestour() {
                   <th className="border px-2 py-1">Kommission</th>
                   <th className="border px-2 py-1">Hinweis</th>
                   <th className="border px-2 py-1">Anmerkung Fahrer</th>
-                  <th className="border px-2 py-1">Foto</th>
+                  <th className="border px-2 py-1 text-center">Foto</th>
                 </tr>
               </thead>
               <tbody>
@@ -431,55 +420,58 @@ export default function Tagestour() {
                       </div>
                     </td>
 
-                    {/* Foto-Spalte */}
-                    <td className="border px-2 py-1 w-[260px]">
+                    {/* Foto-Spalte (📷) */}
+                    <td className="border px-2 py-1 text-center align-middle">
+                      {/* Wenn Foto vorhanden: Thumbnail + Löschen */}
                       {s.foto_url ? (
-                        <div className="flex items-start gap-3">
+                        <div className="flex flex-col items-center gap-2">
                           <a
                             href={s.foto_url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="block"
                             title="Foto ansehen"
                           >
                             <img
                               src={s.foto_url}
                               alt="Stopp-Foto"
-                              className="w-24 h-24 object-cover rounded border"
+                              className="h-14 w-14 object-cover rounded shadow"
                             />
                           </a>
-                          <div className="flex flex-col gap-2">
-                            <button
-                              className="px-3 py-1 rounded bg-red-500 text-white hover:bg-red-600 disabled:opacity-60"
-                              onClick={() => deleteFoto(s.id)}
-                              disabled={photoState[s.id] === "deleting"}
-                            >
-                              {photoState[s.id] === "deleting" ? "Lösche…" : "Foto löschen"}
-                            </button>
-                            {photoState[s.id] === "error" && (
-                              <span className="text-xs text-red-600">Fehler</span>
-                            )}
-                          </div>
+                          <button
+                            onClick={() => handleFotoDelete(s.id)}
+                            className="text-red-600 hover:text-red-800 text-sm"
+                            disabled={fotoState[s.id] === "deleting"}
+                            title="Foto löschen"
+                          >
+                            {fotoState[s.id] === "deleting" ? "… " : ""}🗑️
+                          </button>
                         </div>
                       ) : (
-                        <div className="flex flex-col gap-2">
+                        // Kein Foto: Kamera-Emoji als Button + verstecktes File-Input
+                        <div>
+                          <label
+                            htmlFor={`file-${s.id}`}
+                            className="cursor-pointer select-none text-xl"
+                            title="Foto hochladen"
+                          >
+                            📷
+                          </label>
                           <input
+                            id={`file-${s.id}`}
                             type="file"
                             accept="image/*"
-                            onChange={(e) => onSelectPhoto(s.id, e.target.files?.[0] || null)}
-                          />
-                          <button
-                            className="px-3 py-1 rounded bg-[#0058A3] text-white hover:bg-blue-800 disabled:opacity-60"
-                            onClick={() => uploadFoto(s.id)}
-                            disabled={
-                              !fileByStopp[s.id] || photoState[s.id] === "uploading"
+                            className="hidden"
+                            onChange={(e) =>
+                              handleFotoUpload(s.id, e.target.files?.[0])
                             }
-                          >
-                            {photoState[s.id] === "uploading" ? "Lade hoch…" : "Foto hochladen"}
-                          </button>
-                          {photoState[s.id] === "error" && (
-                            <span className="text-xs text-red-600">Fehler beim Upload</span>
-                          )}
+                            disabled={fotoState[s.id] === "uploading"}
+                          />
+                          <div className="text-xs mt-1 h-4 text-gray-500">
+                            {fotoState[s.id] === "uploading" && "Upload…"}
+                            {fotoState[s.id] === "error" && (
+                              <span className="text-red-600">Fehler</span>
+                            )}
+                          </div>
                         </div>
                       )}
                     </td>
