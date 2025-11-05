@@ -7,21 +7,14 @@ export const API_URL =
 function makeAuthHeader() {
   const token = localStorage.getItem("token") || "";
   const headers = { "Content-Type": "application/json" };
-
-  // 🔒 Token wird nur gesetzt, wenn vorhanden
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-
+  if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
 }
 
 async function handle(res, msg) {
   if (!res.ok) {
     let detail = "";
-    try {
-      detail = await res.text();
-    } catch {}
+    try { detail = await res.text(); } catch {}
     throw new Error(detail ? `${msg}: ${detail}` : msg);
   }
   return res.json();
@@ -36,17 +29,10 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
     });
-
     if (!res.ok) throw new Error("Login fehlgeschlagen");
-
     const data = await res.json();
-
     if (!data.token) throw new Error("Kein Token erhalten");
-
-    // ✅ Token speichern + Aktivität initialisieren
     localStorage.setItem("token", data.token);
-    localStorage.setItem("lastActivity", Date.now().toString());
-
     return data;
   },
 
@@ -86,6 +72,38 @@ export const api = {
     });
     return handle(res, "Fehler beim Laden der Tour");
   },
+  async getTourenAdmin({ fahrer_id, date_from, date_to, kw, kunde } = {}) {
+    const params = new URLSearchParams();
+    if (fahrer_id) params.set("fahrer_id", fahrer_id);
+    if (date_from) params.set("date_from", date_from);
+    if (date_to) params.set("date_to", date_to);
+    if (kw) params.set("kw", kw);
+    if (kunde) params.set("kunde", kunde);
+    const url = `${API_URL}/touren-admin${params.toString() ? `?${params.toString()}` : ""}`;
+    const res = await fetch(url, { headers: makeAuthHeader() });
+    return handle(res, "Fehler beim Laden der Touren");
+  },
+  async getStoppsByTour(tour_id) {
+    const res = await fetch(`${API_URL}/touren/${tour_id}/stopps`, {
+      headers: makeAuthHeader(),
+    });
+    return handle(res, "Fehler beim Laden der Stopps");
+  },
+  async updateTour(id, data) {
+    const res = await fetch(`${API_URL}/touren/${id}`, {
+      method: "PATCH",
+      headers: makeAuthHeader(),
+      body: JSON.stringify(data),
+    });
+    return handle(res, "Fehler beim Aktualisieren der Tour");
+  },
+  async deleteTour(id) {
+    const res = await fetch(`${API_URL}/touren/${id}`, {
+      method: "DELETE",
+      headers: makeAuthHeader(),
+    });
+    return handle(res, "Fehler beim Löschen der Tour");
+  },
 
   // ---------- Stopps ----------
   async createStopp(tour_id, stopp) {
@@ -112,13 +130,12 @@ export const api = {
     return handle(res, "Fehler beim Löschen des Stopps");
   },
 
-  // ---------- Foto ----------
+  // ---------- Einzelfoto (bestehend, unverändert) ----------
   async uploadStoppFoto(stopp_id, file) {
     const form = new FormData();
     form.append("foto", file);
     const token = localStorage.getItem("token") || "";
     const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-
     const res = await fetch(`${API_URL}/stopps/${stopp_id}/foto`, {
       method: "POST",
       headers,
@@ -129,10 +146,36 @@ export const api = {
   async deleteStoppFoto(stopp_id) {
     const token = localStorage.getItem("token") || "";
     const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-
     const res = await fetch(`${API_URL}/stopps/${stopp_id}/foto`, {
       method: "DELETE",
       headers,
+    });
+    return handle(res, "Fehler beim Foto-Löschen");
+  },
+
+  // ---------- Mehrfachfotos (NEU; bis 3) ----------
+  async listStoppFotos(stopp_id) {
+    const res = await fetch(`${API_URL}/stopps/${stopp_id}/fotos`, {
+      headers: makeAuthHeader(),
+    });
+    return handle(res, "Fehler beim Laden der Fotos");
+  },
+  async addStoppFoto(stopp_id, file) {
+    const token = localStorage.getItem("token") || "";
+    const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+    const form = new FormData();
+    form.append("foto", file);
+    const res = await fetch(`${API_URL}/stopps/${stopp_id}/fotos`, {
+      method: "POST",
+      headers,
+      body: form,
+    });
+    return handle(res, "Fehler beim Foto-Upload");
+  },
+  async deleteFotoById(foto_id) {
+    const res = await fetch(`${API_URL}/stopps/fotos/${foto_id}`, {
+      method: "DELETE",
+      headers: makeAuthHeader(),
     });
     return handle(res, "Fehler beim Foto-Löschen");
   },
@@ -146,82 +189,6 @@ export const api = {
     });
     return handle(res, "Fehler beim Speichern der Anmerkung");
   },
-
-  // ---------- Admin / Übersicht ----------
-  async getTourenAdmin({ fahrer_id, date_from, date_to, kw, kunde } = {}) {
-    const params = new URLSearchParams();
-    if (fahrer_id) params.set("fahrer_id", fahrer_id);
-    if (date_from) params.set("date_from", date_from);
-    if (date_to) params.set("date_to", date_to);
-    if (kw) params.set("kw", kw);
-    if (kunde) params.set("kunde", kunde);
-
-    const url = `${API_URL}/touren-admin${
-      params.toString() ? `?${params.toString()}` : ""
-    }`;
-
-    const res = await fetch(url, { headers: makeAuthHeader() });
-    return handle(res, "Fehler beim Laden der Touren");
-  },
-
-  async getStoppsByTour(tour_id) {
-    const res = await fetch(`${API_URL}/touren/${tour_id}/stopps`, {
-      headers: makeAuthHeader(),
-    });
-    return handle(res, "Fehler beim Laden der Stopps");
-  },
-
-  async updateTour(id, data) {
-    const res = await fetch(`${API_URL}/touren/${id}`, {
-      method: "PATCH",
-      headers: makeAuthHeader(),
-      body: JSON.stringify(data),
-    });
-    return handle(res, "Fehler beim Aktualisieren der Tour");
-  },
-
-  async deleteTour(id) {
-    const res = await fetch(`${API_URL}/touren/${id}`, {
-      method: "DELETE",
-      headers: makeAuthHeader(),
-    });
-    return handle(res, "Fehler beim Löschen der Tour");
-  },
 };
 
 export default api;
-
-// =======================================================
-// 🔒 Automatisches Logout nach Inaktivität (Frontend-only)
-// =======================================================
-
-const MAX_INACTIVITY_MINUTES = 30;
-const CHECK_INTERVAL_MS = 60000; // alle 60 Sekunden
-
-function updateLastActivity() {
-  localStorage.setItem("lastActivity", Date.now().toString());
-}
-
-function checkInactivity() {
-  const last = parseInt(localStorage.getItem("lastActivity") || "0", 10);
-  if (!last) return;
-
-  const minutes = (Date.now() - last) / 1000 / 60;
-  if (minutes > MAX_INACTIVITY_MINUTES) {
-    console.warn("⏰ Automatischer Logout wegen Inaktivität");
-    localStorage.removeItem("token");
-    localStorage.removeItem("lastActivity");
-    window.location.href = "/login";
-  }
-}
-
-// Aktivität registrieren
-["click", "mousemove", "keydown", "touchstart"].forEach((evt) =>
-  window.addEventListener(evt, updateLastActivity)
-);
-
-// Prüfen alle 60 Sek.
-setInterval(checkInactivity, CHECK_INTERVAL_MS);
-
-// Initial setzen beim Start
-updateLastActivity();
