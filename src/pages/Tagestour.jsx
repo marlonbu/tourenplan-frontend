@@ -12,7 +12,7 @@ import L from "leaflet";
 
 // ---------- Fester Startpunkt (Firma) ----------
 const START_ADRESSE = "Hans Gehlenborg GmbH, Fehnstraße 3, 49699 Lindern";
-// Fixe Koordinaten (lat, lng) – wie gewünscht per OSM
+// Fixe Koordinaten (lat, lng) – OSM
 const FIRMA_COORDS = [52.8413511, 7.7705647];
 const GMAPS_ORIGIN = `${FIRMA_COORDS[0]},${FIRMA_COORDS[1]}`;
 
@@ -94,10 +94,10 @@ function buildGoogleMapsRouteURL(startOrigin, stopps) {
   return `https://www.google.com/maps/dir/?api=1&travelmode=driving&origin=${origin}&destination=${destination}${waypoints}`;
 }
 
-// OSRM-Routenabfrage (Straßenroute). Erwartet coords: [[lat, lon], ...] in Reihenfolge.
+// OSRM-Routenabfrage
 async function fetchOsrmRoute(coords) {
   if (!coords || coords.length < 2) return null;
-  const path = coords.map(([lat, lon]) => `${lon},${lat}`).join(";"); // OSRM will lon,lat
+  const path = coords.map(([lat, lon]) => `${lon},${lat}`).join(";");
   const url = `https://router.project-osrm.org/route/v1/driving/${path}?overview=full&geometries=geojson`;
   const res = await fetch(url);
   if (!res.ok) return null;
@@ -116,21 +116,20 @@ export default function Tagestour() {
   );
   const [tour, setTour] = useState(null);
 
-  const [stopps, setStopps] = useState([]); // rohe Stopps aus API
-  const [startCoord, setStartCoord] = useState(null); // Koordinate Firma
-  const [geoStopps, setGeoStopps] = useState([]); // [{ stopp, coord|null }]
-  const [markerCoords, setMarkerCoords] = useState([]); // nur vorhandene Koordinaten (Start + Stopps)
-  const [routeCoords, setRouteCoords] = useState([]); // OSRM-Linie
+  const [stopps, setStopps] = useState([]);       // rohe Stopps aus API
+  const [photosMap, setPhotosMap] = useState({}); // { [stoppId]: [{id,url,created_at}, ...] }
+
+  const [startCoord, setStartCoord] = useState(null);
+  const [geoStopps, setGeoStopps] = useState([]);   // [{ stopp, coord|null }]
+  const [markerCoords, setMarkerCoords] = useState([]);
+  const [routeCoords, setRouteCoords] = useState([]);
 
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
   // Autosave-Status für "Anmerkung Fahrer"
-  const [saveState, setSaveState] = useState({}); // { [id]: "saving"|"saved"|"error"|"idle" }
-  const timersRef = useRef({}); // Debounce Timer je Stopp-ID
-
-  // Foto-Upload Status je Stopp
-  const [fotoState, setFotoState] = useState({}); // { [id]: "idle"|"uploading"|"error"|"deleting" }
+  const [saveState, setSaveState] = useState({});
+  const timersRef = useRef({});
 
   useEffect(() => {
     ladeFahrer();
@@ -146,6 +145,19 @@ export default function Tagestour() {
     }
   }
 
+  async function ladeFotosFuerStopps(stoppListe) {
+    const map = {};
+    for (const s of stoppListe) {
+      try {
+        const fotos = await api.listStoppFotos(s.id);
+        map[s.id] = fotos || [];
+      } catch {
+        map[s.id] = [];
+      }
+    }
+    setPhotosMap(map);
+  }
+
   async function ladeTour() {
     if (!selectedFahrer || !datum) {
       alert("Bitte Fahrer und Datum auswählen!");
@@ -154,11 +166,11 @@ export default function Tagestour() {
 
     setLoading(true);
     setSaveState({});
-    setFotoState({});
     setRouteCoords([]);
     setMarkerCoords([]);
     setGeoStopps([]);
     setStartCoord(null);
+    setPhotosMap({});
 
     try {
       const data = await api.getTour(selectedFahrer, datum);
@@ -167,11 +179,14 @@ export default function Tagestour() {
       setStopps(s);
       setMsg(data.tour ? "✅ Tour geladen" : "ℹ️ Keine Tour gefunden");
 
-      // 1) Firma: feste Koordinaten verwenden (kein Geocoder mehr)
+      // Fotos je Stopp (bis zu 3 gehandhabt)
+      if (s.length) await ladeFotosFuerStopps(s);
+
+      // 1) Firma: feste Koordinaten
       const firmCoord = FIRMA_COORDS;
       setStartCoord(firmCoord);
 
-      // 2) Stopps geokodieren (einzeln; Reihenfolge bleibt)
+      // 2) Stopps geokodieren
       const geos = [];
       for (const st of s) {
         if (!st?.adresse) {
@@ -187,27 +202,24 @@ export default function Tagestour() {
       }
       setGeoStopps(geos);
 
-      // 3) Marker: Firma + alle gefundenen Stopp-Koordinaten (ohne null)
+      // 3) Marker
       const mCoords = [
         ...(firmCoord ? [firmCoord] : []),
         ...geos.filter((g) => !!g.coord).map((g) => g.coord),
       ];
       setMarkerCoords(mCoords);
 
-      // 4) Route (OSRM): Firma + alle vorhandenen Stopp-Koordinaten (ohne null)
+      // 4) Route
       const routeInput = [firmCoord, ...geos.map((g) => g.coord).filter(Boolean)].filter(
         Boolean
       );
 
       if (routeInput.length >= 2) {
         const line = await fetchOsrmRoute(routeInput);
-        if (line && line.length) {
-          setRouteCoords(line); // echte Straßenroute
-        } else {
-          setRouteCoords(routeInput); // Fallback: gerade Linie (nur wenn OSRM down)
-        }
+        if (line && line.length) setRouteCoords(line);
+        else setRouteCoords(routeInput);
       } else {
-        setRouteCoords([]); // nur Start vorhanden
+        setRouteCoords([]);
       }
     } catch (err) {
       console.error("Fehler:", err);
@@ -245,38 +257,21 @@ export default function Tagestour() {
     }
   }
 
-  // ---------- Foto-Upload / Löschen (UI-Variante A: nutzt bestehende Endpunkte) ----------
+  // Foto-Upload (Mehrfach, max 3)
   async function handleFotoUpload(stoppId, file) {
     if (!file) return;
     try {
-      setFotoState((st) => ({ ...st, [stoppId]: "uploading" }));
-      const updated = await api.uploadStoppFoto(stoppId, file); // nutzt /stopps/:id/foto
-      // Stopp im State ersetzen (bekommst aktualisierte foto_url zurück)
-      setStopps((prev) => prev.map((s) => (s.id === stoppId ? { ...s, ...updated } : s)));
-      setFotoState((st) => ({ ...st, [stoppId]: "idle" }));
+      await api.addStoppFoto(stoppId, file);
+      // Fotos dieses Stopps neu laden
+      const fotos = await api.listStoppFotos(stoppId);
+      setPhotosMap((m) => ({ ...m, [stoppId]: fotos || [] }));
     } catch (err) {
-      console.error("Foto-Upload fehlgeschlagen:", err);
-      setFotoState((st) => ({ ...st, [stoppId]: "error" }));
-      alert("❌ Foto-Upload fehlgeschlagen.");
+      console.error("Upload fehlgeschlagen:", err);
+      alert("❌ Foto konnte nicht hochgeladen werden (max. 3 Fotos pro Stopp)");
     }
   }
 
-  async function handleFotoDelete(stoppId) {
-    const ok = window.confirm("Foto wirklich entfernen?");
-    if (!ok) return;
-    try {
-      setFotoState((st) => ({ ...st, [stoppId]: "deleting" }));
-      const updated = await api.deleteStoppFoto(stoppId); // nutzt /stopps/:id/foto (DELETE)
-      setStopps((prev) => prev.map((s) => (s.id === stoppId ? { ...s, ...updated } : s)));
-      setFotoState((st) => ({ ...st, [stoppId]: "idle" }));
-    } catch (err) {
-      console.error("Foto-Löschen fehlgeschlagen:", err);
-      setFotoState((st) => ({ ...st, [stoppId]: "error" }));
-      alert("❌ Foto konnte nicht gelöscht werden.");
-    }
-  }
-
-  // Google-Maps Button URL (Firma -> ... -> letzter Kunde), Origin via Koordinaten
+  // Google Maps Button URL (Firma -> ... -> letzter Kunde)
   const gmapsUrl = buildGoogleMapsRouteURL(GMAPS_ORIGIN, stopps);
 
   return (
@@ -325,15 +320,9 @@ export default function Tagestour() {
 
         {tour && (
           <div className="mt-4 text-sm text-gray-700">
-            <div>
-              <b>Tour-ID:</b> {tour.id}
-            </div>
-            <div>
-              <b>Fahrer:</b> {fahrer.find((f) => f.id === tour.fahrer_id)?.name}
-            </div>
-            <div>
-              <b>Datum:</b> {tour.datum}
-            </div>
+            <div><b>Tour-ID:</b> {tour.id}</div>
+            <div><b>Fahrer:</b> {fahrer.find((f) => f.id === tour.fahrer_id)?.name}</div>
+            <div><b>Datum:</b> {tour.datum}</div>
           </div>
         )}
       </section>
@@ -354,8 +343,8 @@ export default function Tagestour() {
                   <th className="border px-2 py-1">Telefon</th>
                   <th className="border px-2 py-1">Kommission</th>
                   <th className="border px-2 py-1">Hinweis</th>
+                  <th className="border px-2 py-1">📷</th>
                   <th className="border px-2 py-1">Anmerkung Fahrer</th>
-                  <th className="border px-2 py-1 text-center">Foto</th>
                 </tr>
               </thead>
               <tbody>
@@ -366,117 +355,99 @@ export default function Tagestour() {
                     </td>
                   </tr>
                 )}
-                {stopps.map((s, i) => (
-                  <tr key={s.id || i} className="hover:bg-gray-50 align-top">
-                    <td className="border px-2 py-1 text-center">{s.position}</td>
-                    <td className="border px-2 py-1">{s.ankunft || ""}</td>
-                    <td className="border px-2 py-1">{s.kunde}</td>
-                    <td className="border px-2 py-1">
-                      <a
-                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                          s.adresse || ""
-                        )}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 hover:underline"
-                      >
-                        {s.adresse}
-                      </a>
-                    </td>
-                    <td className="border px-2 py-1">
-                      {s.telefon ? (
+                {stopps.map((s, i) => {
+                  const fotos = photosMap[s.id] || [];
+                  const freieSlots = Math.max(0, 3 - fotos.length);
+                  return (
+                    <tr key={s.id || i} className="hover:bg-gray-50 align-top">
+                      <td className="border px-2 py-1 text-center">{s.position ?? ""}</td>
+                      <td className="border px-2 py-1">{s.ankunft || ""}</td>
+                      <td className="border px-2 py-1">{s.kunde}</td>
+                      <td className="border px-2 py-1">
                         <a
-                          href={telHref(s.telefon)}
+                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                            s.adresse || ""
+                          )}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
                           className="text-blue-600 hover:underline"
                         >
-                          {s.telefon}
+                          {s.adresse}
                         </a>
-                      ) : (
-                        ""
-                      )}
-                    </td>
-                    <td className="border px-2 py-1">{s.kommission}</td>
-                    <td className="border px-2 py-1">{s.hinweis}</td>
-                    <td className="border px-2 py-1 w-[260px]">
-                      <textarea
-                        className="border rounded-md px-2 py-1 w-full resize-y min-h-[34px]"
-                        placeholder='z. B. "ok" oder Problem notieren'
-                        value={s.anmerkung_fahrer || ""}
-                        onChange={(e) =>
-                          handleAnmerkungChange(s.id, e.target.value)
-                        }
-                        onBlur={(e) => handleAnmerkungBlur(s.id, e.target.value)}
-                      />
-                      <div className="text-xs mt-1 h-4">
-                        {saveState[s.id] === "saving" && (
-                          <span className="text-gray-500">💾 Speichern…</span>
-                        )}
-                        {saveState[s.id] === "saved" && (
-                          <span className="text-green-600">✅ Gespeichert</span>
-                        )}
-                        {saveState[s.id] === "error" && (
-                          <span className="text-red-600">❌ Fehler</span>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Foto-Spalte (📷) */}
-                    <td className="border px-2 py-1 text-center align-middle">
-                      {/* Wenn Foto vorhanden: Thumbnail + Löschen */}
-                      {s.foto_url ? (
-                        <div className="flex flex-col items-center gap-2">
-                          <a
-                            href={s.foto_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            title="Foto ansehen"
-                          >
-                            <img
-                              src={s.foto_url}
-                              alt="Stopp-Foto"
-                              className="h-14 w-14 object-cover rounded shadow"
-                            />
+                      </td>
+                      <td className="border px-2 py-1">
+                        {s.telefon ? (
+                          <a href={telHref(s.telefon)} className="text-blue-600 hover:underline">
+                            {s.telefon}
                           </a>
-                          <button
-                            onClick={() => handleFotoDelete(s.id)}
-                            className="text-red-600 hover:text-red-800 text-sm"
-                            disabled={fotoState[s.id] === "deleting"}
-                            title="Foto löschen"
-                          >
-                            {fotoState[s.id] === "deleting" ? "… " : ""}🗑️
-                          </button>
+                        ) : (
+                          ""
+                        )}
+                      </td>
+                      <td className="border px-2 py-1">{s.kommission || ""}</td>
+                      <td className="border px-2 py-1">{s.hinweis || ""}</td>
+
+                      {/* 📷 Fotos bis 3 */}
+                      <td className="border px-2 py-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {fotos.map((f, idx) => (
+                            <a
+                              key={f.id || idx}
+                              href={f.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title={`Foto ${idx + 1} ansehen / herunterladen`}
+                              className="text-blue-600 hover:underline"
+                            >
+                              📷{idx + 1}
+                            </a>
+                          ))}
+                          {Array.from({ length: freieSlots }).map((_, idx) => (
+                            <label
+                              key={`slot-${s.id}-${idx}`}
+                              className="cursor-pointer inline-flex items-center gap-1 px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded"
+                              title="Foto hochladen"
+                            >
+                              📷+
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) handleFotoUpload(s.id, file);
+                                  e.target.value = "";
+                                }}
+                              />
+                            </label>
+                          ))}
                         </div>
-                      ) : (
-                        // Kein Foto: Kamera-Emoji als Button + verstecktes File-Input
-                        <div>
-                          <label
-                            htmlFor={`file-${s.id}`}
-                            className="cursor-pointer select-none text-xl"
-                            title="Foto hochladen"
-                          >
-                            📷
-                          </label>
-                          <input
-                            id={`file-${s.id}`}
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(e) =>
-                              handleFotoUpload(s.id, e.target.files?.[0])
-                            }
-                            disabled={fotoState[s.id] === "uploading"}
-                          />
-                          <div className="text-xs mt-1 h-4 text-gray-500">
-                            {fotoState[s.id] === "uploading" && "Upload…"}
-                            {fotoState[s.id] === "error" && (
-                              <span className="text-red-600">Fehler</span>
-                            )}
-                          </div>
+                      </td>
+
+                      {/* Anmerkung Fahrer (Autosave) */}
+                      <td className="border px-2 py-1 w-[260px]">
+                        <textarea
+                          className="border rounded-md px-2 py-1 w-full resize-y min-h-[34px]"
+                          placeholder='z. B. "ok" oder Problem notieren'
+                          value={s.anmerkung_fahrer || ""}
+                          onChange={(e) => handleAnmerkungChange(s.id, e.target.value)}
+                          onBlur={(e) => handleAnmerkungBlur(s.id, e.target.value)}
+                        />
+                        <div className="text-xs mt-1 h-4">
+                          {saveState[s.id] === "saving" && (
+                            <span className="text-gray-500">💾 Speichern…</span>
+                          )}
+                          {saveState[s.id] === "saved" && (
+                            <span className="text-green-600">✅ Gespeichert</span>
+                          )}
+                          {saveState[s.id] === "error" && (
+                            <span className="text-red-600">❌ Fehler</span>
+                          )}
                         </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </section>
@@ -484,7 +455,7 @@ export default function Tagestour() {
           {/* Google Maps Button */}
           <div className="w-full flex items-center justify-center">
             <a
-              href={gmapsUrl}
+              href={buildGoogleMapsRouteURL(GMAPS_ORIGIN, stopps)}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-block bg-[#0058A3] text-white px-5 py-2 rounded-md shadow hover:bg-blue-800"
