@@ -8,7 +8,7 @@ export default function Planung() {
   const [tour, setTour] = useState(null);
   const [stopps, setStopps] = useState([]);
 
-  // Felder für neuen Stopp (inkl. NEU: ankunft)
+  // Felder für neuen Stopp (inkl. ANKUNFT)
   const [neuStopp, setNeuStopp] = useState({
     kunde: "",
     adresse: "",
@@ -16,11 +16,8 @@ export default function Planung() {
     kommission: "",
     hinweis: "",
     position: "",
-    ankunft: "", // <— NEU
+    ankunft: "", // <— NEU: frei beschreibbares Feld
   });
-
-  // Inline-Edit-Feld für „Ankunft“ pro bestehendem Stopp
-  const [editAnkunft, setEditAnkunft] = useState({}); // { [stoppId]: "10:00" }
 
   const [msg, setMsg] = useState("");
 
@@ -86,12 +83,6 @@ export default function Planung() {
       const data = await api.getTour(selectedFahrer, datum);
       setTour(data.tour);
       setStopps(data.stopps || []);
-      // bestehende Ankunftswerte in die Edit-Map spiegeln
-      const map = {};
-      (data.stopps || []).forEach((s) => {
-        map[s.id] = s.ankunft || "";
-      });
-      setEditAnkunft(map);
       setMsg(data.tour ? "✅ Tour geladen" : "ℹ️ Keine Tour vorhanden");
     } catch (err) {
       console.error("Fehler:", err);
@@ -99,21 +90,29 @@ export default function Planung() {
     }
   }
 
-  // ---- STOPPS ----
+  // ---- STOPPS (nur hinzufügen; bestehende Stopps sind read-only) ----
   async function addStopp() {
     if (!tour?.id) {
       alert("Bitte zuerst eine Tour anlegen oder laden!");
       return;
     }
-    const payload = { ...neuStopp };
 
+    // Pflichtfelder prüfen
+    const payload = { ...neuStopp };
     if (!payload.kunde || !payload.adresse) {
       alert("Bitte mindestens Kunde und Adresse eingeben!");
       return;
     }
 
+    // position optional -> Zahl oder null
+    if (payload.position === "") {
+      payload.position = null;
+    } else {
+      const p = Number(payload.position);
+      payload.position = Number.isFinite(p) ? p : null;
+    }
+
     try {
-      // sendet auch „ankunft“, das Backend ignoriert es nur, wenn die Spalte noch fehlt
       const s = await api.createStopp(tour.id, payload);
       setStopps([...stopps, s]);
       setNeuStopp({
@@ -129,40 +128,6 @@ export default function Planung() {
     } catch (err) {
       console.error("Fehler:", err);
       setMsg("❌ Stopp konnte nicht angelegt werden");
-    }
-  }
-
-  async function deleteStopp(id) {
-    if (!window.confirm("Diesen Stopp wirklich löschen?")) return;
-    try {
-      await api.deleteStopp(id);
-      setStopps(stopps.filter((s) => s.id !== id));
-      // Edit-Map aufräumen
-      setEditAnkunft((prev) => {
-        const copy = { ...prev };
-        delete copy[id];
-        return copy;
-      });
-    } catch (err) {
-      console.error("Fehler:", err);
-      setMsg("❌ Stopp konnte nicht gelöscht werden");
-    }
-  }
-
-  // Ankunft speichern (pro Zeile)
-  async function saveAnkunft(stopp) {
-    const val = (editAnkunft[stopp.id] ?? "").trim();
-    try {
-      // PATCH auf den Stopp – sendet nur ankunft
-      await api.updateStopp(stopp.id, { ankunft: val });
-      // lokale Liste aktualisieren
-      setStopps((prev) =>
-        prev.map((s) => (s.id === stopp.id ? { ...s, ankunft: val } : s))
-      );
-      setMsg("✅ Ankunft gespeichert");
-    } catch (err) {
-      console.error("Fehler:", err);
-      alert("❌ Ankunft konnte nicht gespeichert werden.");
     }
   }
 
@@ -207,6 +172,7 @@ export default function Planung() {
               <button
                 onClick={() => deleteFahrer(f.id)}
                 className="ml-2 text-red-600 hover:text-red-800"
+                title="Fahrer löschen"
               >
                 ×
               </button>
@@ -253,11 +219,14 @@ export default function Planung() {
             <div>
               <b>Datum:</b> {tour.datum}
             </div>
+            <div className="text-xs text-gray-500 mt-1">
+              Änderungen an Tourdaten oder Stopps bitte in <b>Tourverwaltung</b> vornehmen.
+            </div>
           </div>
         )}
       </section>
 
-      {/* Stopps */}
+      {/* Stopps (read-only Anzeige – nur Hinzufügen erlaubt) */}
       {tour && (
         <section className="bg-white p-4 rounded-lg shadow space-y-4">
           <h2 className="text-lg font-medium text-[#0058A3]">Stopps der Tour</h2>
@@ -272,63 +241,33 @@ export default function Planung() {
                 <th className="border px-2 py-1">Telefon</th>
                 <th className="border px-2 py-1">Kommission</th>
                 <th className="border px-2 py-1">Hinweis</th>
-                <th className="border px-2 py-1">Ankunft</th> {/* NEU */}
-                <th className="border px-2 py-1">Aktionen</th>
+                <th className="border px-2 py-1">Ankunft</th>
+                {/* Keine Aktionen-Spalte mehr in Planung */}
               </tr>
             </thead>
             <tbody>
               {stopps.length === 0 && (
                 <tr>
-                  <td colSpan="8" className="text-center py-2 text-gray-500 italic">
+                  <td colSpan="7" className="text-center py-2 text-gray-500 italic">
                     Keine Stopps vorhanden
                   </td>
                 </tr>
               )}
               {stopps.map((s) => (
                 <tr key={s.id} className="hover:bg-gray-50">
-                  <td className="border px-2 py-1 text-center">{s.position}</td>
+                  <td className="border px-2 py-1 text-center">{s.position ?? ""}</td>
                   <td className="border px-2 py-1">{s.kunde}</td>
                   <td className="border px-2 py-1">{s.adresse}</td>
-                  <td className="border px-2 py-1">{s.telefon}</td>
-                  <td className="border px-2 py-1">{s.kommission}</td>
-                  <td className="border px-2 py-1">{s.hinweis}</td>
-
-                  {/* NEU: Ankunft (editierbar) */}
-                  <td className="border px-2 py-1">
-                    <div className="flex items-center gap-2">
-                      <input
-                        className="border rounded-md px-2 py-1 w-28"
-                        placeholder="z. B. 10:00"
-                        value={editAnkunft[s.id] ?? s.ankunft ?? ""}
-                        onChange={(e) =>
-                          setEditAnkunft((prev) => ({ ...prev, [s.id]: e.target.value }))
-                        }
-                      />
-                      <button
-                        className="text-green-600 hover:text-green-800"
-                        title="Ankunft speichern"
-                        onClick={() => saveAnkunft(s)}
-                      >
-                        💾
-                      </button>
-                    </div>
-                  </td>
-
-                  <td className="border px-2 py-1 text-center">
-                    <button
-                      onClick={() => deleteStopp(s.id)}
-                      className="text-red-600 hover:text-red-800"
-                      title="Stopp löschen"
-                    >
-                      🗑️
-                    </button>
-                  </td>
+                  <td className="border px-2 py-1">{s.telefon || ""}</td>
+                  <td className="border px-2 py-1">{s.kommission || ""}</td>
+                  <td className="border px-2 py-1">{s.hinweis || ""}</td>
+                  <td className="border px-2 py-1">{s.ankunft || ""}</td>
                 </tr>
               ))}
             </tbody>
           </table>
 
-          {/* Formular Neuer Stopp */}
+          {/* Formular Neuer Stopp (hier darf man hinzufügen) */}
           <div className="border-t pt-4">
             <h3 className="text-md font-semibold mb-2 text-[#0058A3]">
               + Neuen Stopp hinzufügen
@@ -357,9 +296,7 @@ export default function Planung() {
                 className="border rounded-md px-3 py-2"
                 placeholder="Kommission"
                 value={neuStopp.kommission}
-                onChange={(e) =>
-                  setNeuStopp({ ...neuStopp, kommission: e.target.value })
-                }
+                onChange={(e) => setNeuStopp({ ...neuStopp, kommission: e.target.value })}
               />
               <input
                 className="border rounded-md px-3 py-2"
@@ -373,10 +310,9 @@ export default function Planung() {
                 value={neuStopp.position}
                 onChange={(e) => setNeuStopp({ ...neuStopp, position: e.target.value })}
               />
-              {/* NEU: Ankunft */}
               <input
-                className="border rounded-md px-3 py-2"
-                placeholder="Ankunft (z. B. 10:00 oder ca. 14:30)"
+                className="border rounded-md px-3 py-2 md:col-span-3"
+                placeholder='Ankunft (z. B. "10:00", "ca. 11:30–12:00")'
                 value={neuStopp.ankunft}
                 onChange={(e) => setNeuStopp({ ...neuStopp, ankunft: e.target.value })}
               />
