@@ -8,7 +8,7 @@ export default function Planung() {
   const [tour, setTour] = useState(null);
   const [stopps, setStopps] = useState([]);
 
-  // Felder für neuen Stopp
+  // Felder für neuen Stopp (inkl. NEU: ankunft)
   const [neuStopp, setNeuStopp] = useState({
     kunde: "",
     adresse: "",
@@ -16,7 +16,11 @@ export default function Planung() {
     kommission: "",
     hinweis: "",
     position: "",
+    ankunft: "", // <— NEU
   });
+
+  // Inline-Edit-Feld für „Ankunft“ pro bestehendem Stopp
+  const [editAnkunft, setEditAnkunft] = useState({}); // { [stoppId]: "10:00" }
 
   const [msg, setMsg] = useState("");
 
@@ -82,6 +86,12 @@ export default function Planung() {
       const data = await api.getTour(selectedFahrer, datum);
       setTour(data.tour);
       setStopps(data.stopps || []);
+      // bestehende Ankunftswerte in die Edit-Map spiegeln
+      const map = {};
+      (data.stopps || []).forEach((s) => {
+        map[s.id] = s.ankunft || "";
+      });
+      setEditAnkunft(map);
       setMsg(data.tour ? "✅ Tour geladen" : "ℹ️ Keine Tour vorhanden");
     } catch (err) {
       console.error("Fehler:", err);
@@ -96,11 +106,14 @@ export default function Planung() {
       return;
     }
     const payload = { ...neuStopp };
+
     if (!payload.kunde || !payload.adresse) {
       alert("Bitte mindestens Kunde und Adresse eingeben!");
       return;
     }
+
     try {
+      // sendet auch „ankunft“, das Backend ignoriert es nur, wenn die Spalte noch fehlt
       const s = await api.createStopp(tour.id, payload);
       setStopps([...stopps, s]);
       setNeuStopp({
@@ -110,6 +123,7 @@ export default function Planung() {
         kommission: "",
         hinweis: "",
         position: "",
+        ankunft: "",
       });
       setMsg("✅ Stopp hinzugefügt");
     } catch (err) {
@@ -123,9 +137,32 @@ export default function Planung() {
     try {
       await api.deleteStopp(id);
       setStopps(stopps.filter((s) => s.id !== id));
+      // Edit-Map aufräumen
+      setEditAnkunft((prev) => {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      });
     } catch (err) {
       console.error("Fehler:", err);
       setMsg("❌ Stopp konnte nicht gelöscht werden");
+    }
+  }
+
+  // Ankunft speichern (pro Zeile)
+  async function saveAnkunft(stopp) {
+    const val = (editAnkunft[stopp.id] ?? "").trim();
+    try {
+      // PATCH auf den Stopp – sendet nur ankunft
+      await api.updateStopp(stopp.id, { ankunft: val });
+      // lokale Liste aktualisieren
+      setStopps((prev) =>
+        prev.map((s) => (s.id === stopp.id ? { ...s, ankunft: val } : s))
+      );
+      setMsg("✅ Ankunft gespeichert");
+    } catch (err) {
+      console.error("Fehler:", err);
+      alert("❌ Ankunft konnte nicht gespeichert werden.");
     }
   }
 
@@ -223,9 +260,7 @@ export default function Planung() {
       {/* Stopps */}
       {tour && (
         <section className="bg-white p-4 rounded-lg shadow space-y-4">
-          <h2 className="text-lg font-medium text-[#0058A3]">
-            Stopps der Tour
-          </h2>
+          <h2 className="text-lg font-medium text-[#0058A3]">Stopps der Tour</h2>
 
           {/* Tabelle */}
           <table className="min-w-full border text-sm">
@@ -237,16 +272,14 @@ export default function Planung() {
                 <th className="border px-2 py-1">Telefon</th>
                 <th className="border px-2 py-1">Kommission</th>
                 <th className="border px-2 py-1">Hinweis</th>
+                <th className="border px-2 py-1">Ankunft</th> {/* NEU */}
                 <th className="border px-2 py-1">Aktionen</th>
               </tr>
             </thead>
             <tbody>
               {stopps.length === 0 && (
                 <tr>
-                  <td
-                    colSpan="7"
-                    className="text-center py-2 text-gray-500 italic"
-                  >
+                  <td colSpan="8" className="text-center py-2 text-gray-500 italic">
                     Keine Stopps vorhanden
                   </td>
                 </tr>
@@ -259,10 +292,33 @@ export default function Planung() {
                   <td className="border px-2 py-1">{s.telefon}</td>
                   <td className="border px-2 py-1">{s.kommission}</td>
                   <td className="border px-2 py-1">{s.hinweis}</td>
+
+                  {/* NEU: Ankunft (editierbar) */}
+                  <td className="border px-2 py-1">
+                    <div className="flex items-center gap-2">
+                      <input
+                        className="border rounded-md px-2 py-1 w-28"
+                        placeholder="z. B. 10:00"
+                        value={editAnkunft[s.id] ?? s.ankunft ?? ""}
+                        onChange={(e) =>
+                          setEditAnkunft((prev) => ({ ...prev, [s.id]: e.target.value }))
+                        }
+                      />
+                      <button
+                        className="text-green-600 hover:text-green-800"
+                        title="Ankunft speichern"
+                        onClick={() => saveAnkunft(s)}
+                      >
+                        💾
+                      </button>
+                    </div>
+                  </td>
+
                   <td className="border px-2 py-1 text-center">
                     <button
                       onClick={() => deleteStopp(s.id)}
                       className="text-red-600 hover:text-red-800"
+                      title="Stopp löschen"
                     >
                       🗑️
                     </button>
@@ -283,25 +339,19 @@ export default function Planung() {
                 className="border rounded-md px-3 py-2"
                 placeholder="Kunde"
                 value={neuStopp.kunde}
-                onChange={(e) =>
-                  setNeuStopp({ ...neuStopp, kunde: e.target.value })
-                }
+                onChange={(e) => setNeuStopp({ ...neuStopp, kunde: e.target.value })}
               />
               <input
                 className="border rounded-md px-3 py-2"
                 placeholder="Adresse"
                 value={neuStopp.adresse}
-                onChange={(e) =>
-                  setNeuStopp({ ...neuStopp, adresse: e.target.value })
-                }
+                onChange={(e) => setNeuStopp({ ...neuStopp, adresse: e.target.value })}
               />
               <input
                 className="border rounded-md px-3 py-2"
                 placeholder="Telefon"
                 value={neuStopp.telefon}
-                onChange={(e) =>
-                  setNeuStopp({ ...neuStopp, telefon: e.target.value })
-                }
+                onChange={(e) => setNeuStopp({ ...neuStopp, telefon: e.target.value })}
               />
               <input
                 className="border rounded-md px-3 py-2"
@@ -315,17 +365,20 @@ export default function Planung() {
                 className="border rounded-md px-3 py-2"
                 placeholder="Hinweis"
                 value={neuStopp.hinweis}
-                onChange={(e) =>
-                  setNeuStopp({ ...neuStopp, hinweis: e.target.value })
-                }
+                onChange={(e) => setNeuStopp({ ...neuStopp, hinweis: e.target.value })}
               />
               <input
                 className="border rounded-md px-3 py-2"
                 placeholder="Position (z. B. 1, 2, 3)"
                 value={neuStopp.position}
-                onChange={(e) =>
-                  setNeuStopp({ ...neuStopp, position: e.target.value })
-                }
+                onChange={(e) => setNeuStopp({ ...neuStopp, position: e.target.value })}
+              />
+              {/* NEU: Ankunft */}
+              <input
+                className="border rounded-md px-3 py-2"
+                placeholder="Ankunft (z. B. 10:00 oder ca. 14:30)"
+                value={neuStopp.ankunft}
+                onChange={(e) => setNeuStopp({ ...neuStopp, ankunft: e.target.value })}
               />
             </div>
 
