@@ -18,7 +18,6 @@ function authHeaders() {
 async function parseJsonSafe(res) {
   const ct = res.headers.get("content-type") || "";
   if (ct.includes("application/json")) return res.json();
-  // Fallback: Text lesen (z.B. HTML von Render bei Fehlern)
   const text = await res.text();
   throw new Error(
     text && text.trim().startsWith("<")
@@ -28,6 +27,19 @@ async function parseJsonSafe(res) {
 }
 
 export const api = {
+  // ---- Login ----
+  async login(username, password) {
+    const res = await fetch(`${BASE_URL}/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) throw new Error("Login fehlgeschlagen");
+    const data = await parseJsonSafe(res);
+    if (data.token) localStorage.setItem("token", data.token);
+    return data;
+  },
+
   // ---- Fahrer ----
   async listFahrer() {
     const res = await fetch(`${BASE_URL}/fahrer`, { headers: { ...authHeaders() } });
@@ -142,7 +154,7 @@ export const api = {
     return parseJsonSafe(res);
   },
 
-  // ---- Fotos: Mehrfach (bis 3) ----
+  // ---- Fotos (Mehrfach, bis 3) ----
   async getStoppFotos(stoppId) {
     const res = await fetch(`${BASE_URL}/stopps/${stoppId}/fotos`, {
       headers: { ...authHeaders() },
@@ -152,20 +164,15 @@ export const api = {
   },
   async uploadStoppFoto(stoppId, file) {
     const fd = new FormData();
-    // WICHTIG: Feldname MUSS 'foto' heißen (Multer: single('foto'))
-    fd.append("foto", file);
+    fd.append("foto", file); // Feldname MUSS "foto" heißen
 
     const res = await fetch(`${BASE_URL}/stopps/${stoppId}/fotos`, {
       method: "POST",
-      headers: {
-        // KEIN Content-Type manuell setzen!
-        ...authHeaders(),
-      },
+      headers: { ...authHeaders() },
       body: fd,
     });
 
     if (!res.ok) {
-      // Versuch JSON zu holen, ansonsten Text
       try {
         const j = await res.json();
         throw new Error(j?.error || "Foto-Upload fehlgeschlagen");
