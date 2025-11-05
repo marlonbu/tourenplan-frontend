@@ -29,14 +29,12 @@ function sortRowsAsc(a, b) {
 }
 
 export default function Uebersicht() {
-  const [subTab, setSubTab] = useState("gesamt"); // "gesamt" | "woche"
-
   // Filter
   const [fahrer, setFahrer] = useState([]);
   const [filterFahrer, setFilterFahrer] = useState("");  // "" = Alle Fahrer
   const [filterVon, setFilterVon] = useState("");        // YYYY-MM-DD
   const [filterBis, setFilterBis] = useState("");        // YYYY-MM-DD
-  const [filterKw, setFilterKw] = useState("");          // YYYY-Www
+  const [filterKw, setFilterKw] = useState("");          // YYYY-Www (optional)
   const [filterKunde, setFilterKunde] = useState("");
 
   // Daten
@@ -46,9 +44,9 @@ export default function Uebersicht() {
 
   useEffect(() => {
     ladeFahrer();
-    applyFilter(); // initial & beim Tab-Wechsel
+    applyFilter(); // initialer Load
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subTab]);
+  }, []);
 
   async function ladeFahrer() {
     try {
@@ -64,21 +62,17 @@ export default function Uebersicht() {
       setLoading(true);
       setMsg("");
 
-      // Filter für /touren-admin vorbereiten
-      const payload =
-        subTab === "woche"
-          ? {
-              fahrer_id: filterFahrer || undefined,
-              kw: filterKw || undefined,          // YYYY-Www
-              kunde: filterKunde || undefined,
-            }
-          : {
-              fahrer_id: filterFahrer || undefined,
-              date_from: filterVon || undefined,  // YYYY-MM-DD
-              date_to: filterBis || undefined,    // YYYY-MM-DD
-              kw: filterKw || undefined,          // optional zusätzlich
-              kunde: filterKunde || undefined,
-            };
+      // Für /touren-admin:
+      // Wenn Von/Bis gesetzt ist, verwenden wir diese (KW wird vom Backend dann ignoriert).
+      // Wenn Von/Bis leer sind und KW gesetzt ist, verwenden wir KW.
+      const useDates = !!(filterVon || filterBis);
+      const payload = {
+        fahrer_id: filterFahrer || undefined,
+        date_from: useDates ? filterVon || undefined : undefined,
+        date_to: useDates ? filterBis || undefined : undefined,
+        kw: !useDates ? (filterKw || undefined) : undefined,
+        kunde: filterKunde || undefined,
+      };
 
       // 1) Touren holen
       const touren = await api.getTourenAdmin(payload);
@@ -109,8 +103,7 @@ export default function Uebersicht() {
             }));
           } catch (e) {
             console.error(`Stopps für Tour ${t.id} laden fehlgeschlagen:`, e);
-            // Wenn eine Tour fehlschlägt, liefern wir einfach keine Stopps für diese Tour,
-            // die anderen Touren sollen trotzdem angezeigt werden.
+            // Wenn eine Tour fehlschlägt, zeigen wir die anderen Touren trotzdem an.
             return [];
           }
         })
@@ -143,26 +136,6 @@ export default function Uebersicht() {
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold text-[#0058A3]">Gesamtübersicht</h1>
 
-      {/* Unter-Tabs */}
-      <div className="bg-white p-2 rounded-lg shadow flex gap-2">
-        <button
-          className={`px-4 py-2 rounded-md ${
-            subTab === "gesamt" ? "bg-[#0058A3] text-white" : "bg-gray-100"
-          }`}
-          onClick={() => setSubTab("gesamt")}
-        >
-          Gesamtübersicht
-        </button>
-        <button
-          className={`px-4 py-2 rounded-md ${
-            subTab === "woche" ? "bg-[#0058A3] text-white" : "bg-gray-100"
-          }`}
-          onClick={() => setSubTab("woche")}
-        >
-          Wochenübersicht
-        </button>
-      </div>
-
       {/* Filter */}
       <section className="bg-white p-4 rounded-lg shadow space-y-3">
         <h2 className="text-lg font-medium text-[#0058A3]">Filter</h2>
@@ -193,7 +166,6 @@ export default function Uebersicht() {
               className="border rounded-md px-3 py-2 w-full"
               value={filterVon}
               onChange={(e) => setFilterVon(e.target.value)}
-              disabled={subTab === "woche"}
             />
           </div>
 
@@ -205,11 +177,10 @@ export default function Uebersicht() {
               className="border rounded-md px-3 py-2 w-full"
               value={filterBis}
               onChange={(e) => setFilterBis(e.target.value)}
-              disabled={subTab === "woche"}
             />
           </div>
 
-          {/* Kalenderwoche */}
+          {/* Kalenderwoche (optional, wird nur genutzt, wenn Von/Bis leer sind) */}
           <div>
             <label className="text-sm text-gray-600 block">Kalenderwoche</label>
             <input
@@ -218,6 +189,9 @@ export default function Uebersicht() {
               value={filterKw}
               onChange={(e) => setFilterKw(e.target.value)}
             />
+            <p className="text-xs text-gray-500 mt-1">
+              Hinweis: Wenn „Datum von/bis“ gesetzt ist, wird die KW ignoriert.
+            </p>
           </div>
 
           {/* Kunde */}
@@ -283,7 +257,10 @@ export default function Uebersicht() {
                     <td className="border px-2 py-1">{r.adresse}</td>
                     <td className="border px-2 py-1">
                       {r.telefon ? (
-                        <a className="text-blue-600 hover:underline" href={`tel:${r.telefon.replace(/\s+/g, "")}`}>
+                        <a
+                          className="text-blue-600 hover:underline"
+                          href={`tel:${r.telefon.replace(/\s+/g, "")}`}
+                        >
                           {r.telefon}
                         </a>
                       ) : (
