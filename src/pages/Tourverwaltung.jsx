@@ -115,6 +115,7 @@ export default function Tourverwaltung() {
         for (const item of s) {
           next[item.id] = {
             position: item.position ?? "",
+            ankunft: item.ankunft ?? "",
             kunde: item.kunde ?? "",
             adresse: item.adresse ?? "",
             telefon: item.telefon ?? "",
@@ -185,6 +186,7 @@ export default function Tourverwaltung() {
       ...d,
       [stopp.id]: {
         position: stopp.position ?? "",
+        ankunft: stopp.ankunft ?? "",
         kunde: stopp.kunde ?? "",
         adresse: stopp.adresse ?? "",
         telefon: stopp.telefon ?? "",
@@ -200,8 +202,7 @@ export default function Tourverwaltung() {
       delete c[stoppId];
       return c;
     });
-    // Draft beibehalten (kein Schaden), oder zum Aufräumen löschen:
-    // setStoppDraft((d) => { const c = { ...d }; delete c[stoppId]; return c; });
+    // Draft behalten ist okay
   }
 
   function changeStoppDraft(stoppId, field, value) {
@@ -214,6 +215,7 @@ export default function Tourverwaltung() {
       // Typkonvertierung für position
       if (payload.position === "") payload.position = null;
       if (payload.position != null) payload.position = Number(payload.position);
+      // ankunft bleibt String (frei formatiert, z. B. "10:00", "ca. 11–12 Uhr")
 
       await api.updateStopp(stoppId, payload);
 
@@ -466,6 +468,7 @@ export default function Tourverwaltung() {
                                 <thead className="bg-gray-200">
                                   <tr>
                                     <th className="border px-2 py-1 text-left">Pos</th>
+                                    <th className="border px-2 py-1 text-left">Ankunft</th>
                                     <th className="border px-2 py-1 text-left">Kunde</th>
                                     <th className="border px-2 py-1 text-left">Adresse</th>
                                     <th className="border px-2 py-1 text-left">Telefon</th>
@@ -477,7 +480,7 @@ export default function Tourverwaltung() {
                                 <tbody>
                                   {stoppsMap[t.id].length === 0 && (
                                     <tr>
-                                      <td colSpan={7} className="text-center py-2 text-gray-500">
+                                      <td colSpan={8} className="text-center py-2 text-gray-500">
                                         Keine Stopps
                                       </td>
                                     </tr>
@@ -506,6 +509,24 @@ export default function Tourverwaltung() {
                                             />
                                           )}
                                         </td>
+
+                                        {/* Ankunft */}
+                                        <td className="border px-2 py-1 w-28">
+                                          {!isEditing ? (
+                                            s.ankunft || <span className="text-gray-400">–</span>
+                                          ) : (
+                                            <input
+                                              type="text"
+                                              className="border rounded px-2 py-1 w-full"
+                                              placeholder="z. B. 10:00 / 10–12"
+                                              value={draft.ankunft ?? ""}
+                                              onChange={(e) =>
+                                                changeStoppDraft(s.id, "ankunft", e.target.value)
+                                              }
+                                            />
+                                          )}
+                                        </td>
+
                                         {/* Kunde */}
                                         <td className="border px-2 py-1 w-56">
                                           {!isEditing ? (
@@ -519,6 +540,7 @@ export default function Tourverwaltung() {
                                             />
                                           )}
                                         </td>
+
                                         {/* Adresse */}
                                         <td className="border px-2 py-1 w-72">
                                           {!isEditing ? (
@@ -532,6 +554,7 @@ export default function Tourverwaltung() {
                                             />
                                           )}
                                         </td>
+
                                         {/* Telefon */}
                                         <td className="border px-2 py-1 w-48">
                                           {!isEditing ? (
@@ -545,6 +568,7 @@ export default function Tourverwaltung() {
                                             />
                                           )}
                                         </td>
+
                                         {/* Kommission */}
                                         <td className="border px-2 py-1 w-48">
                                           {!isEditing ? (
@@ -558,6 +582,7 @@ export default function Tourverwaltung() {
                                             />
                                           )}
                                         </td>
+
                                         {/* Hinweis */}
                                         <td className="border px-2 py-1 w-72">
                                           {!isEditing ? (
