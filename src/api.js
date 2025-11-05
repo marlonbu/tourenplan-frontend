@@ -1,194 +1,189 @@
-// src/api.js — Zentrale API mit stabilem JWT-Login, Token-Speicherung und Authorization-Header
+// src/api.js
+// Zentrale API-Hilfsfunktionen für Tourenplan-Frontend
+// ⚙️ Erkennt automatisch Umgebung (Render / Lokal) und ruft IMMER das Backend unter der korrekten Domain auf.
 
-export const API_URL =
-  import.meta.env.VITE_API_URL || "https://tourenplan.onrender.com";
+const BACKEND_URL =
+  window.location.hostname.includes("render")
+    ? "https://tourenplan.onrender.com" // deine Backend-App auf Render
+    : "http://localhost:10000";          // lokal
 
-// ---------- Hilfsfunktionen ----------
-function makeAuthHeader() {
-  const token = localStorage.getItem("token") || "";
-  const headers = { "Content-Type": "application/json" };
-  if (token) headers.Authorization = `Bearer ${token}`;
-  return headers;
+function authHeaders() {
+  const token = localStorage.getItem("token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function handle(res, msg) {
-  if (!res.ok) {
-    let detail = "";
-    try { detail = await res.text(); } catch {}
-    throw new Error(detail ? `${msg}: ${detail}` : msg);
+// JSON-Wrapper mit robuster HTML-Erkennung (z. B. wenn falsche Domain antwortet)
+async function jsonFetch(url, options = {}) {
+  const res = await fetch(url, options);
+  const text = await res.text();
+
+  // Versuche JSON zu parsen; wenn es HTML ist (z. B. <!DOCTYPE ...>), klare Fehlermeldung
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      console.error("❌ Unerwartete (nicht-JSON) Antwort:", text.slice(0, 200));
+      throw new Error("Server-Antwort war ungültig (kein JSON). Prüfe BACKEND_URL.");
+    }
   }
-  return res.json();
+
+  if (!res.ok) {
+    throw new Error(data?.error || `Fehler ${res.status}`);
+  }
+  return data;
 }
 
-// ---------- API ----------
 export const api = {
-  // ---------- Login ----------
-  async login(username, password) {
-    const res = await fetch(`${API_URL}/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
-    if (!res.ok) throw new Error("Login fehlgeschlagen");
-    const data = await res.json();
-    if (!data.token) throw new Error("Kein Token erhalten");
-    localStorage.setItem("token", data.token);
-    return data;
-  },
-
-  // ---------- Fahrer ----------
+  // ===== Fahrer =====
   async listFahrer() {
-    const res = await fetch(`${API_URL}/fahrer`, { headers: makeAuthHeader() });
-    return handle(res, "Fehler beim Laden der Fahrer");
+    return jsonFetch(`${BACKEND_URL}/fahrer`, { headers: authHeaders() });
   },
   async addFahrer(name) {
-    const res = await fetch(`${API_URL}/fahrer`, {
+    return jsonFetch(`${BACKEND_URL}/fahrer`, {
       method: "POST",
-      headers: makeAuthHeader(),
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ name }),
     });
-    return handle(res, "Fehler beim Hinzufügen des Fahrers");
   },
   async deleteFahrer(id) {
-    const res = await fetch(`${API_URL}/fahrer/${id}`, {
+    return jsonFetch(`${BACKEND_URL}/fahrer/${id}`, {
       method: "DELETE",
-      headers: makeAuthHeader(),
+      headers: authHeaders(),
     });
-    return handle(res, "Fehler beim Löschen des Fahrers");
   },
 
-  // ---------- Touren ----------
+  // ===== Touren (Planung / Tagestour) =====
   async createTour(fahrer_id, datum) {
-    const res = await fetch(`${API_URL}/touren`, {
+    return jsonFetch(`${BACKEND_URL}/touren`, {
       method: "POST",
-      headers: makeAuthHeader(),
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ fahrer_id, datum }),
     });
-    return handle(res, "Fehler beim Anlegen der Tour");
   },
-  async getTour(fahrer_id, datum) {
-    const res = await fetch(`${API_URL}/touren/${fahrer_id}/${datum}`, {
-      headers: makeAuthHeader(),
+  async getTour(fahrerId, datum) {
+    return jsonFetch(`${BACKEND_URL}/touren/${fahrerId}/${datum}`, {
+      headers: authHeaders(),
     });
-    return handle(res, "Fehler beim Laden der Tour");
-  },
-  async getTourenAdmin({ fahrer_id, date_from, date_to, kw, kunde } = {}) {
-    const params = new URLSearchParams();
-    if (fahrer_id) params.set("fahrer_id", fahrer_id);
-    if (date_from) params.set("date_from", date_from);
-    if (date_to) params.set("date_to", date_to);
-    if (kw) params.set("kw", kw);
-    if (kunde) params.set("kunde", kunde);
-    const url = `${API_URL}/touren-admin${params.toString() ? `?${params.toString()}` : ""}`;
-    const res = await fetch(url, { headers: makeAuthHeader() });
-    return handle(res, "Fehler beim Laden der Touren");
-  },
-  async getStoppsByTour(tour_id) {
-    const res = await fetch(`${API_URL}/touren/${tour_id}/stopps`, {
-      headers: makeAuthHeader(),
-    });
-    return handle(res, "Fehler beim Laden der Stopps");
-  },
-  async updateTour(id, data) {
-    const res = await fetch(`${API_URL}/touren/${id}`, {
-      method: "PATCH",
-      headers: makeAuthHeader(),
-      body: JSON.stringify(data),
-    });
-    return handle(res, "Fehler beim Aktualisieren der Tour");
-  },
-  async deleteTour(id) {
-    const res = await fetch(`${API_URL}/touren/${id}`, {
-      method: "DELETE",
-      headers: makeAuthHeader(),
-    });
-    return handle(res, "Fehler beim Löschen der Tour");
   },
 
-  // ---------- Stopps ----------
+  // ===== Tourverwaltung – Liste & Details =====
+  async getTourenAdmin(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.fahrer_id) params.set("fahrer_id", filters.fahrer_id);
+    if (filters.date_from) params.set("date_from", filters.date_from);
+    if (filters.date_to) params.set("date_to", filters.date_to);
+    if (filters.kw) params.set("kw", filters.kw);
+    if (filters.kunde) params.set("kunde", filters.kunde);
+    const q = params.toString();
+    const url = `${BACKEND_URL}/touren-admin${q ? `?${q}` : ""}`;
+    return jsonFetch(url, { headers: authHeaders() });
+  },
+  async getStoppsByTour(tourId) {
+    return jsonFetch(`${BACKEND_URL}/touren/${tourId}/stopps`, {
+      headers: authHeaders(),
+    });
+  },
+  async updateTour(tourId, payload) {
+    // Server hat PATCH /touren/:id nicht – in deiner App wird aktuell nur
+    // /touren-admin gelesen und die Tour in der Liste per updateTour(tid, payload) gespeichert.
+    // Falls du später eine eigene Tour-Update-Route baust, ergänzen.
+    // Hier deshalb explizit Fehler geben, wenn jemals aufgerufen:
+    throw new Error("updateTour ist serverseitig (noch) nicht implementiert.");
+  },
+  async deleteTour(tourId) {
+    // Ebenso: In deinem aktuellen server.js gibt es kein DELETE /touren/:id.
+    // Falls das bei dir bereits existiert, kannst du es hier aktivieren:
+    // return jsonFetch(`${BACKEND_URL}/touren/${tourId}`, { method: "DELETE", headers: authHeaders() });
+    throw new Error("deleteTour ist serverseitig (noch) nicht implementiert.");
+  },
+
+  // ===== Stopps =====
   async createStopp(tour_id, stopp) {
-    const res = await fetch(`${API_URL}/stopps/${tour_id}`, {
+    return jsonFetch(`${BACKEND_URL}/stopps/${tour_id}`, {
       method: "POST",
-      headers: makeAuthHeader(),
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(stopp),
     });
-    return handle(res, "Fehler beim Hinzufügen des Stopps");
   },
   async updateStopp(id, data) {
-    const res = await fetch(`${API_URL}/stopps/${id}`, {
+    return jsonFetch(`${BACKEND_URL}/stopps/${id}`, {
       method: "PATCH",
-      headers: makeAuthHeader(),
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(data),
     });
-    return handle(res, "Fehler beim Aktualisieren des Stopps");
   },
-  async deleteStopp(id) {
-    const res = await fetch(`${API_URL}/stopps/${id}`, {
-      method: "DELETE",
-      headers: makeAuthHeader(),
-    });
-    return handle(res, "Fehler beim Löschen des Stopps");
-  },
-
-  // ---------- Einzelfoto (bestehend, unverändert) ----------
-  async uploadStoppFoto(stopp_id, file) {
-    const form = new FormData();
-    form.append("foto", file);
-    const token = localStorage.getItem("token") || "";
-    const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-    const res = await fetch(`${API_URL}/stopps/${stopp_id}/foto`, {
-      method: "POST",
-      headers,
-      body: form,
-    });
-    return handle(res, "Fehler beim Foto-Upload");
-  },
-  async deleteStoppFoto(stopp_id) {
-    const token = localStorage.getItem("token") || "";
-    const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-    const res = await fetch(`${API_URL}/stopps/${stopp_id}/foto`, {
-      method: "DELETE",
-      headers,
-    });
-    return handle(res, "Fehler beim Foto-Löschen");
-  },
-
-  // ---------- Mehrfachfotos (NEU; bis 3) ----------
-  async listStoppFotos(stopp_id) {
-    const res = await fetch(`${API_URL}/stopps/${stopp_id}/fotos`, {
-      headers: makeAuthHeader(),
-    });
-    return handle(res, "Fehler beim Laden der Fotos");
-  },
-  async addStoppFoto(stopp_id, file) {
-    const token = localStorage.getItem("token") || "";
-    const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-    const form = new FormData();
-    form.append("foto", file);
-    const res = await fetch(`${API_URL}/stopps/${stopp_id}/fotos`, {
-      method: "POST",
-      headers,
-      body: form,
-    });
-    return handle(res, "Fehler beim Foto-Upload");
-  },
-  async deleteFotoById(foto_id) {
-    const res = await fetch(`${API_URL}/stopps/fotos/${foto_id}`, {
-      method: "DELETE",
-      headers: makeAuthHeader(),
-    });
-    return handle(res, "Fehler beim Foto-Löschen");
-  },
-
-  // ---------- Anmerkung Fahrer ----------
   async updateStoppAnmerkung(id, anmerkung_fahrer) {
-    const res = await fetch(`${API_URL}/stopps/${id}/anmerkung`, {
+    return jsonFetch(`${BACKEND_URL}/stopps/${id}/anmerkung`, {
       method: "PATCH",
-      headers: makeAuthHeader(),
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ anmerkung_fahrer }),
     });
-    return handle(res, "Fehler beim Speichern der Anmerkung");
+  },
+  async deleteStopp(id) {
+    return jsonFetch(`${BACKEND_URL}/stopps/${id}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+  },
+
+  // ===== Fotos – Single (bestehend) =====
+  async uploadSingleFoto(stoppId, file) {
+    const fd = new FormData();
+    fd.append("foto", file); // Feldname MUSS "foto" heißen -> multer.single("foto")
+    const res = await fetch(`${BACKEND_URL}/stopps/${stoppId}/foto`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: fd,
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      // Versuche Fehler aus JSON zu ziehen, sonst Text anzeigen
+      try {
+        const j = JSON.parse(text);
+        throw new Error(j?.error || "Fehler beim Foto-Upload");
+      } catch {
+        throw new Error(text || "Fehler beim Foto-Upload");
+      }
+    }
+    return JSON.parse(text);
+  },
+  async deleteSingleFoto(stoppId) {
+    return jsonFetch(`${BACKEND_URL}/stopps/${stoppId}/foto`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+  },
+
+  // ===== Fotos – Mehrfach (NEU, bis 3/Stopp) =====
+  async listFotos(stoppId) {
+    return jsonFetch(`${BACKEND_URL}/stopps/${stoppId}/fotos`, {
+      headers: authHeaders(),
+    });
+  },
+  async uploadFoto(stoppId, file) {
+    const fd = new FormData();
+    fd.append("foto", file); // Feldname MUSS "foto" heißen -> multer.single("foto")
+    const res = await fetch(`${BACKEND_URL}/stopps/${stoppId}/fotos`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: fd,
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      try {
+        const j = JSON.parse(text);
+        throw new Error(j?.error || "Fehler beim Foto-Upload");
+      } catch {
+        throw new Error(text || "Fehler beim Foto-Upload");
+      }
+    }
+    return JSON.parse(text);
+  },
+  async deleteFoto(fotoId) {
+    return jsonFetch(`${BACKEND_URL}/stopps/fotos/${fotoId}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
   },
 };
-
-export default api;
