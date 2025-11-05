@@ -1,6 +1,5 @@
-// src/pages/Tagestour.jsx
 import React, { useEffect, useRef, useState } from "react";
-import { api, API_URL } from "../api";
+import { api } from "../api";
 import {
   MapContainer,
   TileLayer,
@@ -13,7 +12,7 @@ import L from "leaflet";
 
 // ---------- Fester Startpunkt (Firma) ----------
 const START_ADRESSE = "Hans Gehlenborg GmbH, Fehnstraße 3, 49699 Lindern";
-// Fixe Koordinaten (lat, lng)
+// Fixe Koordinaten (lat, lng) – wie gewünscht per OSM
 const FIRMA_COORDS = [52.8413511, 7.7705647];
 const GMAPS_ORIGIN = `${FIRMA_COORDS[0]},${FIRMA_COORDS[1]}`;
 
@@ -109,6 +108,12 @@ async function fetchOsrmRoute(coords) {
   return line.length ? line : null;
 }
 
+// ========= Auth-Header für direkte fetch-Requests =========
+function authHeaders() {
+  const token = localStorage.getItem("token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export default function Tagestour() {
   const [fahrer, setFahrer] = useState([]);
   const [selectedFahrer, setSelectedFahrer] = useState("");
@@ -123,17 +128,17 @@ export default function Tagestour() {
   const [markerCoords, setMarkerCoords] = useState([]); // nur vorhandene Koordinaten (Start + Stopps)
   const [routeCoords, setRouteCoords] = useState([]); // OSRM-Linie
 
+  // Fotos
+  const [fotosMap, setFotosMap] = useState({}); // { [stoppId]: [{id,url,created_at}] }
+  const [openFotoRow, setOpenFotoRow] = useState({}); // { [stoppId]: bool }
+  const [loadingFoto, setLoadingFoto] = useState({}); // { [stoppId]: "loading"|"uploading"|"idle" }
+
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
   // Autosave-Status für "Anmerkung Fahrer"
   const [saveState, setSaveState] = useState({}); // { [id]: "saving"|"saved"|"error"|"idle" }
   const timersRef = useRef({}); // Debounce Timer je Stopp-ID
-
-  // Fotos: pro Stopp bis zu 3
-  const [fotosMap, setFotosMap] = useState({}); // { [stoppId]: [{id, url, name?}] }
-  const [fotoBusyMap, setFotoBusyMap] = useState({}); // { [stoppId]: "loading"|"uploading"|undefined }
-  const [fotoDeleteBusy, setFotoDeleteBusy] = useState({}); // { [fotoId]: boolean }
 
   useEffect(() => {
     ladeFahrer();
@@ -146,38 +151,6 @@ export default function Tagestour() {
     } catch (err) {
       console.error("Fehler beim Laden der Fahrer:", err);
       setMsg("❌ Fahrer konnten nicht geladen werden");
-    }
-  }
-
-  function authHeaders() {
-    const token = localStorage.getItem("token") || "";
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  }
-
-  async function ladeFotosFuerStopps(stoppListe) {
-    // lädt Fotos für alle Stopps parallel
-    try {
-      const headers = authHeaders();
-      setFotoBusyMap({});
-      const entries = await Promise.all(
-        (stoppListe || []).map(async (s) => {
-          try {
-            const res = await fetch(`${API_URL}/stopps/${s.id}/fotos`, {
-              headers,
-            });
-            if (!res.ok) throw new Error("Fotos laden fehlgeschlagen");
-            const arr = await res.json(); // erwartetes Format: [{id, url, name?}, ...]
-            return [s.id, Array.isArray(arr) ? arr : []];
-          } catch {
-            return [s.id, []];
-          }
-        })
-      );
-      const map = {};
-      for (const [sid, arr] of entries) map[sid] = arr;
-      setFotosMap(map);
-    } catch (e) {
-      // leise scheitern – UI bleibt funktionsfähig
     }
   }
 
@@ -194,6 +167,8 @@ export default function Tagestour() {
     setGeoStopps([]);
     setStartCoord(null);
     setFotosMap({});
+    setOpenFotoRow({});
+    setLoadingFoto({});
 
     try {
       const data = await api.getTour(selectedFahrer, datum);
@@ -202,7 +177,7 @@ export default function Tagestour() {
       setStopps(s);
       setMsg(data.tour ? "✅ Tour geladen" : "ℹ️ Keine Tour gefunden");
 
-      // 1) Firma: feste Koordinaten verwenden
+      // 1) Firma: feste Koordinaten verwenden (kein Geocoder mehr)
       const firmCoord = FIRMA_COORDS;
       setStartCoord(firmCoord);
 
@@ -244,9 +219,6 @@ export default function Tagestour() {
       } else {
         setRouteCoords([]); // nur Start vorhanden
       }
-
-      // 5) Fotos laden
-      await ladeFotosFuerStopps(s);
     } catch (err) {
       console.error("Fehler:", err);
       setMsg("❌ Tour konnte nicht geladen werden");
@@ -284,81 +256,83 @@ export default function Tagestour() {
     }
   }
 
-  // Fotos hochladen (bis zu 3 je Stopp)
-  async function handleFotoUpload(stoppId, fileList) {
-    if (!fileList || fileList.length === 0) return;
-
-    const exist = fotosMap[stoppId] || [];
-    const remaining = Math.max(0, 3 - exist.length);
-    if (remaining === 0) {
-      alert("Maximal 3 Fotos pro Stopp erlaubt.");
-      return;
-    }
-
-    const files = Array.from(fileList).slice(0, remaining);
-
-    const form = new FormData();
-    for (const f of files) form.append("fotos", f); // Backend erwartet Feldname 'fotos'
-
+  // ---- Fotos (Mehrfach) ----
+  async function ladeFotos(stoppId) {
+    setLoadingFoto((m) => ({ ...m, [stoppId]: "loading" }));
     try {
-      setFotoBusyMap((m) => ({ ...m, [stoppId]: "uploading" }));
-      const res = await fetch(`${API_URL}/stopps/${stoppId}/fotos`, {
+      const res = await fetch(`/stopps/${stoppId}/fotos`, {
+        headers: { ...authHeaders() },
+      });
+      if (!res.ok) throw new Error("Fotos laden fehlgeschlagen");
+      const data = await res.json();
+      setFotosMap((m) => ({ ...m, [stoppId]: data }));
+    } catch (e) {
+      console.error(e);
+      alert("❌ Fotos konnten nicht geladen werden");
+    } finally {
+      setLoadingFoto((m) => ({ ...m, [stoppId]: "idle" }));
+    }
+  }
+
+  async function uploadFoto(stoppId, file) {
+    if (!file) return;
+    setLoadingFoto((m) => ({ ...m, [stoppId]: "uploading" }));
+    try {
+      const fd = new FormData();
+      // GANZ WICHTIG: Feldname muss "foto" heißen (wie im Backend)!
+      fd.append("foto", file);
+
+      const res = await fetch(`/stopps/${stoppId}/fotos`, {
         method: "POST",
-        headers: authHeaders(),
-        body: form,
+        headers: { ...authHeaders() },
+        body: fd,
       });
       if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(txt || "Upload fehlgeschlagen");
+        const t = await res.text().catch(() => "");
+        throw new Error(t || "Upload fehlgeschlagen");
       }
-      // Nach Upload neu laden
-      const list = await fetch(`${API_URL}/stopps/${stoppId}/fotos`, {
-        headers: authHeaders(),
-      }).then((r) => r.json());
-      setFotosMap((m) => ({ ...m, [stoppId]: Array.isArray(list) ? list : [] }));
+      await ladeFotos(stoppId);
     } catch (e) {
-      console.error("Foto-Upload fehlgeschlagen:", e);
+      console.error(e);
       alert("❌ Foto-Upload fehlgeschlagen");
     } finally {
-      setFotoBusyMap((m) => {
-        const c = { ...m };
-        delete c[stoppId];
-        return c;
-      });
+      setLoadingFoto((m) => ({ ...m, [stoppId]: "idle" }));
     }
   }
 
-  async function handleFotoDelete(stoppId, fotoId) {
-    const ok = window.confirm("Dieses Foto wirklich löschen?");
-    if (!ok) return;
-
+  async function deleteFoto(fotoId, stoppId) {
+    if (!confirm("Dieses Foto wirklich löschen?")) return;
+    setLoadingFoto((m) => ({ ...m, [stoppId]: "loading" }));
     try {
-      setFotoDeleteBusy((d) => ({ ...d, [fotoId]: true }));
-      const res = await fetch(`${API_URL}/stopps/${stoppId}/fotos/${fotoId}`, {
+      // Delete-Endpunkt ohne stopp_id (Backend akzeptiert zusätzlich auch die Variante mit stopp_id)
+      const res = await fetch(`/stopps/fotos/${fotoId}`, {
         method: "DELETE",
-        headers: authHeaders(),
+        headers: { ...authHeaders() },
       });
       if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(txt || "Löschen fehlgeschlagen");
+        const t = await res.text().catch(() => "");
+        throw new Error(t || "Löschen fehlgeschlagen");
       }
-      setFotosMap((m) => ({
-        ...m,
-        [stoppId]: (m[stoppId] || []).filter((f) => f.id !== fotoId),
-      }));
+      await ladeFotos(stoppId);
     } catch (e) {
-      console.error("Foto löschen fehlgeschlagen:", e);
+      console.error(e);
       alert("❌ Foto konnte nicht gelöscht werden");
     } finally {
-      setFotoDeleteBusy((d) => {
-        const c = { ...d };
-        delete c[fotoId];
-        return c;
-      });
+      setLoadingFoto((m) => ({ ...m, [stoppId]: "idle" }));
     }
   }
 
-  // Google-Maps Button URL (Firma -> ... -> letzter Kunde), Origin via Koordinaten
+  function toggleFotosRow(stoppId) {
+    setOpenFotoRow((o) => {
+      const next = { ...o, [stoppId]: !o[stoppId] };
+      return next;
+    });
+    // Beim Öffnen Fotos laden
+    const nowOpen = !openFotoRow[stoppId];
+    if (nowOpen) ladeFotos(stoppId);
+  }
+
+  // Google-Maps Button URL (Firma -> ... -> letzter Kunde), Origin jetzt via Koordinaten
   const gmapsUrl = buildGoogleMapsRouteURL(GMAPS_ORIGIN, stopps);
 
   return (
@@ -430,13 +404,13 @@ export default function Tagestour() {
               <thead className="bg-[#0058A3] text-white">
                 <tr>
                   <th className="border px-2 py-1">Pos</th>
+                  <th className="border px-2 py-1">📷</th>
                   <th className="border px-2 py-1">Ankunft</th>
                   <th className="border px-2 py-1">Kunde</th>
                   <th className="border px-2 py-1">Adresse</th>
                   <th className="border px-2 py-1">Telefon</th>
                   <th className="border px-2 py-1">Kommission</th>
                   <th className="border px-2 py-1">Hinweis</th>
-                  <th className="border px-2 py-1 text-center">📷</th>
                   <th className="border px-2 py-1">Anmerkung Fahrer</th>
                 </tr>
               </thead>
@@ -448,14 +422,27 @@ export default function Tagestour() {
                     </td>
                   </tr>
                 )}
-                {stopps.map((s, i) => {
-                  const fotos = fotosMap[s.id] || [];
-                  const uploading = fotoBusyMap[s.id] === "uploading";
-                  const remaining = Math.max(0, 3 - fotos.length);
-
-                  return (
-                    <tr key={s.id || i} className="hover:bg-gray-50 align-top">
+                {stopps.map((s, i) => (
+                  <React.Fragment key={s.id || i}>
+                    <tr className="hover:bg-gray-50 align-top">
                       <td className="border px-2 py-1 text-center">{s.position}</td>
+
+                      {/* 📷-Zelle */}
+                      <td className="border px-2 py-1 text-center">
+                        <button
+                          onClick={() => toggleFotosRow(s.id)}
+                          className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200"
+                          title="Fotos anzeigen/hochladen"
+                        >
+                          📷
+                          {Array.isArray(fotosMap[s.id]) && fotosMap[s.id].length > 0 ? (
+                            <span className="ml-1 text-xs text-gray-600">
+                              ({fotosMap[s.id].length})
+                            </span>
+                          ) : null}
+                        </button>
+                      </td>
+
                       <td className="border px-2 py-1">{s.ankunft || ""}</td>
                       <td className="border px-2 py-1">{s.kunde}</td>
                       <td className="border px-2 py-1">
@@ -463,10 +450,11 @@ export default function Tagestour() {
                           href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
                             s.adresse || ""
                           )}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:underline"
                         >
-                          <span className="text-blue-600 hover:underline">
-                            {s.adresse}
-                          </span>
+                          {s.adresse}
                         </a>
                       </td>
                       <td className="border px-2 py-1">
@@ -483,70 +471,6 @@ export default function Tagestour() {
                       </td>
                       <td className="border px-2 py-1">{s.kommission}</td>
                       <td className="border px-2 py-1">{s.hinweis}</td>
-
-                      {/* 📷 Fotos */}
-                      <td className="border px-2 py-1">
-                        {/* Thumbnails */}
-                        <div className="flex flex-wrap gap-2 mb-2">
-                          {fotos.map((f) => (
-                            <div
-                              key={f.id}
-                              className="relative w-16 h-16 rounded overflow-hidden border"
-                              title={f.name || "Foto"}
-                            >
-                              <a
-                                href={f.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="block w-full h-full"
-                              >
-                                <img
-                                  src={f.url}
-                                  alt="Foto"
-                                  className="object-cover w-full h-full"
-                                  loading="lazy"
-                                />
-                              </a>
-                              <button
-                                onClick={() => handleFotoDelete(s.id, f.id)}
-                                className="absolute -top-2 -right-2 bg-red-600 text-white w-5 h-5 rounded-full text-xs"
-                                title="Foto löschen"
-                                disabled={!!fotoDeleteBusy[f.id]}
-                              >
-                                {fotoDeleteBusy[f.id] ? "…" : "×"}
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* Upload-Button */}
-                        <label className="inline-flex items-center gap-2 rounded-md px-2 py-1 text-sm cursor-pointer bg-gray-100 hover:bg-gray-200">
-                          <span>📷 +</span>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            multiple
-                            className="hidden"
-                            onChange={(e) => {
-                              const files = e.target.files;
-                              if (files && files.length) {
-                                handleFotoUpload(s.id, files);
-                                e.target.value = "";
-                              }
-                            }}
-                            disabled={uploading || remaining === 0}
-                          />
-                        </label>
-                        <div className="text-xs text-gray-500 mt-1 h-4">
-                          {uploading
-                            ? "Lade hoch…"
-                            : remaining === 0
-                            ? "Max. 3 Fotos erreicht"
-                            : `Noch ${remaining} frei`}
-                        </div>
-                      </td>
-
-                      {/* Anmerkung Fahrer (Autosave) */}
                       <td className="border px-2 py-1 w-[260px]">
                         <textarea
                           className="border rounded-md px-2 py-1 w-full resize-y min-h-[34px]"
@@ -570,8 +494,79 @@ export default function Tagestour() {
                         </div>
                       </td>
                     </tr>
-                  );
-                })}
+
+                    {/* Aufklappbare Fotozeile */}
+                    {openFotoRow[s.id] && (
+                      <tr className="bg-white">
+                        <td colSpan={9} className="border px-3 py-3">
+                          <div className="flex flex-wrap items-center gap-3">
+                            {/* Upload */}
+                            <label className="inline-flex items-center gap-2 px-3 py-2 rounded bg-[#0058A3] text-white hover:bg-blue-800 cursor-pointer">
+                              📷 + Foto
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  e.target.value = "";
+                                  uploadFoto(s.id, file);
+                                }}
+                              />
+                            </label>
+                            {loadingFoto[s.id] === "uploading" && (
+                              <span className="text-gray-600 text-sm">Upload …</span>
+                            )}
+                          </div>
+
+                          {/* Galerie */}
+                          <div className="mt-3 flex flex-wrap gap-3">
+                            {loadingFoto[s.id] === "loading" && (
+                              <div className="text-gray-500 text-sm">Fotos werden geladen …</div>
+                            )}
+
+                            {Array.isArray(fotosMap[s.id]) && fotosMap[s.id].length > 0 ? (
+                              fotosMap[s.id].map((f) => (
+                                <div
+                                  key={f.id}
+                                  className="w-[140px] border rounded-md p-2 flex flex-col items-center"
+                                >
+                                  <a href={f.url} target="_blank" rel="noreferrer">
+                                    <img
+                                      src={f.url}
+                                      alt="Foto"
+                                      className="w-[120px] h-[120px] object-cover rounded"
+                                    />
+                                  </a>
+                                  <div className="mt-2 flex gap-2">
+                                    <a
+                                      href={f.url}
+                                      download
+                                      className="text-sm px-2 py-1 bg-gray-100 rounded hover:bg-gray-200"
+                                    >
+                                      ⬇️
+                                    </a>
+                                    <button
+                                      onClick={() => deleteFoto(f.id, s.id)}
+                                      className="text-sm px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600"
+                                      title="Foto löschen"
+                                    >
+                                      🗑️
+                                    </button>
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="text-gray-500 text-sm">
+                                Keine Fotos vorhanden.
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                ))}
               </tbody>
             </table>
           </section>
