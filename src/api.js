@@ -1,189 +1,187 @@
 // src/api.js
-// Zentrale API-Hilfsfunktionen für Tourenplan-Frontend
-// ⚙️ Erkennt automatisch Umgebung (Render / Lokal) und ruft IMMER das Backend unter der korrekten Domain auf.
+// Zentrale API-Schicht – sorgt dafür, dass ALLE Requests zum richtigen Backend gehen
+// und der Foto-Upload exakt so gesendet wird, wie Multer es erwartet (Feldname: "foto").
 
-const BACKEND_URL =
-  window.location.hostname.includes("render")
-    ? "https://tourenplan.onrender.com" // deine Backend-App auf Render
-    : "http://localhost:10000";          // lokal
+const isLocal =
+  typeof window !== "undefined" &&
+  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+
+const BASE_URL = isLocal
+  ? "http://localhost:10000"
+  : "https://tourenplan.onrender.com"; // dein Backend auf Render
 
 function authHeaders() {
   const token = localStorage.getItem("token");
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-// JSON-Wrapper mit robuster HTML-Erkennung (z. B. wenn falsche Domain antwortet)
-async function jsonFetch(url, options = {}) {
-  const res = await fetch(url, options);
+async function parseJsonSafe(res) {
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("application/json")) return res.json();
+  // Fallback: Text lesen (z.B. HTML von Render bei Fehlern)
   const text = await res.text();
-
-  // Versuche JSON zu parsen; wenn es HTML ist (z. B. <!DOCTYPE ...>), klare Fehlermeldung
-  let data = null;
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      console.error("❌ Unerwartete (nicht-JSON) Antwort:", text.slice(0, 200));
-      throw new Error("Server-Antwort war ungültig (kein JSON). Prüfe BACKEND_URL.");
-    }
-  }
-
-  if (!res.ok) {
-    throw new Error(data?.error || `Fehler ${res.status}`);
-  }
-  return data;
+  throw new Error(
+    text && text.trim().startsWith("<")
+      ? "Server-Antwort war HTML (vermutlich falsche URL oder Weiterleitung)."
+      : text || `HTTP ${res.status}`
+  );
 }
 
 export const api = {
-  // ===== Fahrer =====
+  // ---- Fahrer ----
   async listFahrer() {
-    return jsonFetch(`${BACKEND_URL}/fahrer`, { headers: authHeaders() });
+    const res = await fetch(`${BASE_URL}/fahrer`, { headers: { ...authHeaders() } });
+    if (!res.ok) throw new Error("Fahrer laden fehlgeschlagen");
+    return parseJsonSafe(res);
   },
   async addFahrer(name) {
-    return jsonFetch(`${BACKEND_URL}/fahrer`, {
+    const res = await fetch(`${BASE_URL}/fahrer`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ name }),
     });
+    if (!res.ok) throw new Error("Fahrer konnte nicht hinzugefügt werden");
+    return parseJsonSafe(res);
   },
   async deleteFahrer(id) {
-    return jsonFetch(`${BACKEND_URL}/fahrer/${id}`, {
+    const res = await fetch(`${BASE_URL}/fahrer/${id}`, {
       method: "DELETE",
-      headers: authHeaders(),
+      headers: { ...authHeaders() },
     });
+    if (!res.ok) throw new Error("Fahrer konnte nicht gelöscht werden");
+    return parseJsonSafe(res);
   },
 
-  // ===== Touren (Planung / Tagestour) =====
+  // ---- Touren ----
   async createTour(fahrer_id, datum) {
-    return jsonFetch(`${BACKEND_URL}/touren`, {
+    const res = await fetch(`${BASE_URL}/touren`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ fahrer_id, datum }),
     });
+    if (!res.ok) throw new Error("Tour konnte nicht angelegt werden");
+    return parseJsonSafe(res);
   },
-  async getTour(fahrerId, datum) {
-    return jsonFetch(`${BACKEND_URL}/touren/${fahrerId}/${datum}`, {
-      headers: authHeaders(),
+  async getTour(fahrer_id, datum) {
+    const res = await fetch(`${BASE_URL}/touren/${fahrer_id}/${datum}`, {
+      headers: { ...authHeaders() },
     });
+    if (!res.ok) throw new Error("Tour konnte nicht geladen werden");
+    return parseJsonSafe(res);
   },
-
-  // ===== Tourverwaltung – Liste & Details =====
-  async getTourenAdmin(filters = {}) {
+  async getTourenAdmin(payload) {
     const params = new URLSearchParams();
-    if (filters.fahrer_id) params.set("fahrer_id", filters.fahrer_id);
-    if (filters.date_from) params.set("date_from", filters.date_from);
-    if (filters.date_to) params.set("date_to", filters.date_to);
-    if (filters.kw) params.set("kw", filters.kw);
-    if (filters.kunde) params.set("kunde", filters.kunde);
-    const q = params.toString();
-    const url = `${BACKEND_URL}/touren-admin${q ? `?${q}` : ""}`;
-    return jsonFetch(url, { headers: authHeaders() });
-  },
-  async getStoppsByTour(tourId) {
-    return jsonFetch(`${BACKEND_URL}/touren/${tourId}/stopps`, {
-      headers: authHeaders(),
+    Object.entries(payload || {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") params.set(k, v);
     });
-  },
-  async updateTour(tourId, payload) {
-    // Server hat PATCH /touren/:id nicht – in deiner App wird aktuell nur
-    // /touren-admin gelesen und die Tour in der Liste per updateTour(tid, payload) gespeichert.
-    // Falls du später eine eigene Tour-Update-Route baust, ergänzen.
-    // Hier deshalb explizit Fehler geben, wenn jemals aufgerufen:
-    throw new Error("updateTour ist serverseitig (noch) nicht implementiert.");
-  },
-  async deleteTour(tourId) {
-    // Ebenso: In deinem aktuellen server.js gibt es kein DELETE /touren/:id.
-    // Falls das bei dir bereits existiert, kannst du es hier aktivieren:
-    // return jsonFetch(`${BACKEND_URL}/touren/${tourId}`, { method: "DELETE", headers: authHeaders() });
-    throw new Error("deleteTour ist serverseitig (noch) nicht implementiert.");
-  },
-
-  // ===== Stopps =====
-  async createStopp(tour_id, stopp) {
-    return jsonFetch(`${BACKEND_URL}/stopps/${tour_id}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify(stopp),
+    const res = await fetch(`${BASE_URL}/touren-admin?${params.toString()}`, {
+      headers: { ...authHeaders() },
     });
+    if (!res.ok) throw new Error("Touren (Admin) konnten nicht geladen werden");
+    return parseJsonSafe(res);
   },
-  async updateStopp(id, data) {
-    return jsonFetch(`${BACKEND_URL}/stopps/${id}`, {
+  async updateTour(id, body) {
+    const res = await fetch(`${BASE_URL}/touren/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify(data),
+      body: JSON.stringify(body || {}),
     });
+    if (!res.ok) throw new Error("Tour konnte nicht gespeichert werden");
+    return parseJsonSafe(res);
+  },
+  async deleteTour(id) {
+    const res = await fetch(`${BASE_URL}/touren/${id}`, {
+      method: "DELETE",
+      headers: { ...authHeaders() },
+    });
+    if (!res.ok) throw new Error("Tour konnte nicht gelöscht werden");
+    return parseJsonSafe(res);
+  },
+
+  // ---- Stopps ----
+  async getStoppsByTour(tourId) {
+    const res = await fetch(`${BASE_URL}/touren/${tourId}/stopps`, {
+      headers: { ...authHeaders() },
+    });
+    if (!res.ok) throw new Error("Stopps konnten nicht geladen werden");
+    return parseJsonSafe(res);
+  },
+  async createStopp(tour_id, body) {
+    const res = await fetch(`${BASE_URL}/stopps/${tour_id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(body || {}),
+    });
+    if (!res.ok) throw new Error("Stopp konnte nicht angelegt werden");
+    return parseJsonSafe(res);
+  },
+  async updateStopp(id, body) {
+    const res = await fetch(`${BASE_URL}/stopps/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(body || {}),
+    });
+    if (!res.ok) throw new Error("Stopp konnte nicht gespeichert werden");
+    return parseJsonSafe(res);
+  },
+  async deleteStopp(id) {
+    const res = await fetch(`${BASE_URL}/stopps/${id}`, {
+      method: "DELETE",
+      headers: { ...authHeaders() },
+    });
+    if (!res.ok) throw new Error("Stopp konnte nicht gelöscht werden");
+    return parseJsonSafe(res);
   },
   async updateStoppAnmerkung(id, anmerkung_fahrer) {
-    return jsonFetch(`${BACKEND_URL}/stopps/${id}/anmerkung`, {
+    const res = await fetch(`${BASE_URL}/stopps/${id}/anmerkung`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ anmerkung_fahrer }),
     });
-  },
-  async deleteStopp(id) {
-    return jsonFetch(`${BACKEND_URL}/stopps/${id}`, {
-      method: "DELETE",
-      headers: authHeaders(),
-    });
+    if (!res.ok) throw new Error("Anmerkung konnte nicht gespeichert werden");
+    return parseJsonSafe(res);
   },
 
-  // ===== Fotos – Single (bestehend) =====
-  async uploadSingleFoto(stoppId, file) {
+  // ---- Fotos: Mehrfach (bis 3) ----
+  async getStoppFotos(stoppId) {
+    const res = await fetch(`${BASE_URL}/stopps/${stoppId}/fotos`, {
+      headers: { ...authHeaders() },
+    });
+    if (!res.ok) throw new Error("Fotos konnten nicht geladen werden");
+    return parseJsonSafe(res);
+  },
+  async uploadStoppFoto(stoppId, file) {
     const fd = new FormData();
-    fd.append("foto", file); // Feldname MUSS "foto" heißen -> multer.single("foto")
-    const res = await fetch(`${BACKEND_URL}/stopps/${stoppId}/foto`, {
-      method: "POST",
-      headers: authHeaders(),
-      body: fd,
-    });
-    const text = await res.text();
-    if (!res.ok) {
-      // Versuche Fehler aus JSON zu ziehen, sonst Text anzeigen
-      try {
-        const j = JSON.parse(text);
-        throw new Error(j?.error || "Fehler beim Foto-Upload");
-      } catch {
-        throw new Error(text || "Fehler beim Foto-Upload");
-      }
-    }
-    return JSON.parse(text);
-  },
-  async deleteSingleFoto(stoppId) {
-    return jsonFetch(`${BACKEND_URL}/stopps/${stoppId}/foto`, {
-      method: "DELETE",
-      headers: authHeaders(),
-    });
-  },
+    // WICHTIG: Feldname MUSS 'foto' heißen (Multer: single('foto'))
+    fd.append("foto", file);
 
-  // ===== Fotos – Mehrfach (NEU, bis 3/Stopp) =====
-  async listFotos(stoppId) {
-    return jsonFetch(`${BACKEND_URL}/stopps/${stoppId}/fotos`, {
-      headers: authHeaders(),
-    });
-  },
-  async uploadFoto(stoppId, file) {
-    const fd = new FormData();
-    fd.append("foto", file); // Feldname MUSS "foto" heißen -> multer.single("foto")
-    const res = await fetch(`${BACKEND_URL}/stopps/${stoppId}/fotos`, {
+    const res = await fetch(`${BASE_URL}/stopps/${stoppId}/fotos`, {
       method: "POST",
-      headers: authHeaders(),
+      headers: {
+        // KEIN Content-Type manuell setzen!
+        ...authHeaders(),
+      },
       body: fd,
     });
-    const text = await res.text();
+
     if (!res.ok) {
+      // Versuch JSON zu holen, ansonsten Text
       try {
-        const j = JSON.parse(text);
-        throw new Error(j?.error || "Fehler beim Foto-Upload");
+        const j = await res.json();
+        throw new Error(j?.error || "Foto-Upload fehlgeschlagen");
       } catch {
-        throw new Error(text || "Fehler beim Foto-Upload");
+        const t = await res.text();
+        throw new Error(t || "Foto-Upload fehlgeschlagen");
       }
     }
-    return JSON.parse(text);
+    return res.json();
   },
-  async deleteFoto(fotoId) {
-    return jsonFetch(`${BACKEND_URL}/stopps/fotos/${fotoId}`, {
+  async deleteStoppFoto(fotoId) {
+    const res = await fetch(`${BASE_URL}/stopps/fotos/${fotoId}`, {
       method: "DELETE",
-      headers: authHeaders(),
+      headers: { ...authHeaders() },
     });
+    if (!res.ok) throw new Error("Foto konnte nicht gelöscht werden");
+    return parseJsonSafe(res);
   },
 };
