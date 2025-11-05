@@ -43,8 +43,9 @@ export const api = {
 
     if (!data.token) throw new Error("Kein Token erhalten");
 
-    // ✅ Token speichern
+    // ✅ Token speichern + Aktivität initialisieren
     localStorage.setItem("token", data.token);
+    localStorage.setItem("lastActivity", Date.now().toString());
 
     return data;
   },
@@ -189,3 +190,38 @@ export const api = {
 };
 
 export default api;
+
+// =======================================================
+// 🔒 Automatisches Logout nach Inaktivität (Frontend-only)
+// =======================================================
+
+const MAX_INACTIVITY_MINUTES = 30;
+const CHECK_INTERVAL_MS = 60000; // alle 60 Sekunden
+
+function updateLastActivity() {
+  localStorage.setItem("lastActivity", Date.now().toString());
+}
+
+function checkInactivity() {
+  const last = parseInt(localStorage.getItem("lastActivity") || "0", 10);
+  if (!last) return;
+
+  const minutes = (Date.now() - last) / 1000 / 60;
+  if (minutes > MAX_INACTIVITY_MINUTES) {
+    console.warn("⏰ Automatischer Logout wegen Inaktivität");
+    localStorage.removeItem("token");
+    localStorage.removeItem("lastActivity");
+    window.location.href = "/login";
+  }
+}
+
+// Aktivität registrieren
+["click", "mousemove", "keydown", "touchstart"].forEach((evt) =>
+  window.addEventListener(evt, updateLastActivity)
+);
+
+// Prüfen alle 60 Sek.
+setInterval(checkInactivity, CHECK_INTERVAL_MS);
+
+// Initial setzen beim Start
+updateLastActivity();
