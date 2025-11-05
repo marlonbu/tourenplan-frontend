@@ -12,7 +12,7 @@ import L from "leaflet";
 
 // ---------- Fester Startpunkt (Firma) ----------
 const START_ADRESSE = "Hans Gehlenborg GmbH, Fehnstraße 3, 49699 Lindern";
-// Fixe Koordinaten (lat, lng) – wie gewünscht per OSM
+// Fixe Koordinaten (lat, lng) – OSM
 const FIRMA_COORDS = [52.8413511, 7.7705647];
 const GMAPS_ORIGIN = `${FIRMA_COORDS[0]},${FIRMA_COORDS[1]}`;
 
@@ -129,6 +129,10 @@ export default function Tagestour() {
   const [saveState, setSaveState] = useState({}); // { [id]: "saving"|"saved"|"error"|"idle" }
   const timersRef = useRef({}); // Debounce Timer je Stopp-ID
 
+  // Foto-Upload/Löschen Status und ausgewählte Datei je Stopp
+  const [fileByStopp, setFileByStopp] = useState({}); // { [id]: File }
+  const [photoState, setPhotoState] = useState({}); // { [id]: "idle"|"uploading"|"deleting"|"error" }
+
   useEffect(() => {
     ladeFahrer();
   }, []);
@@ -242,7 +246,48 @@ export default function Tagestour() {
     }
   }
 
-  // Google-Maps Button URL (Firma -> ... -> letzter Kunde), Origin jetzt via Koordinaten
+  // Foto UI: Datei auswählen
+  function onSelectPhoto(stoppId, file) {
+    setFileByStopp((m) => ({ ...m, [stoppId]: file || null }));
+  }
+
+  // Foto hochladen (bestehender Backend-Endpunkt /stopps/:id/foto)
+  async function uploadFoto(stoppId) {
+    const file = fileByStopp[stoppId];
+    if (!file) {
+      alert("Bitte zuerst ein Foto auswählen.");
+      return;
+    }
+    try {
+      setPhotoState((s) => ({ ...s, [stoppId]: "uploading" }));
+      const updated = await api.uploadStoppFoto(stoppId, file);
+      // Stopp in der Liste aktualisieren
+      setStopps((prev) => prev.map((s) => (s.id === stoppId ? updated : s)));
+      // Auswahl leeren
+      setFileByStopp((m) => ({ ...m, [stoppId]: null }));
+      setPhotoState((s) => ({ ...s, [stoppId]: "idle" }));
+    } catch (err) {
+      console.error("Foto-Upload fehlgeschlagen:", err);
+      setPhotoState((s) => ({ ...s, [stoppId]: "error" }));
+    }
+  }
+
+  // Foto löschen (bestehender Backend-Endpunkt /stopps/:id/foto DELETE)
+  async function deleteFoto(stoppId) {
+    const ok = window.confirm("Foto wirklich löschen?");
+    if (!ok) return;
+    try {
+      setPhotoState((s) => ({ ...s, [stoppId]: "deleting" }));
+      const updated = await api.deleteStoppFoto(stoppId);
+      setStopps((prev) => prev.map((s) => (s.id === stoppId ? updated : s)));
+      setPhotoState((s) => ({ ...s, [stoppId]: "idle" }));
+    } catch (err) {
+      console.error("Foto-Löschen fehlgeschlagen:", err);
+      setPhotoState((s) => ({ ...s, [stoppId]: "error" }));
+    }
+  }
+
+  // Google-Maps Button URL (Firma -> ... -> letzter Kunde), Origin via Koordinaten
   const gmapsUrl = buildGoogleMapsRouteURL(GMAPS_ORIGIN, stopps);
 
   return (
@@ -321,12 +366,13 @@ export default function Tagestour() {
                   <th className="border px-2 py-1">Kommission</th>
                   <th className="border px-2 py-1">Hinweis</th>
                   <th className="border px-2 py-1">Anmerkung Fahrer</th>
+                  <th className="border px-2 py-1">Foto</th>
                 </tr>
               </thead>
               <tbody>
                 {stopps.length === 0 && (
                   <tr>
-                    <td colSpan="8" className="text-center py-2 text-gray-500 italic">
+                    <td colSpan="9" className="text-center py-2 text-gray-500 italic">
                       Keine Stopps vorhanden
                     </td>
                   </tr>
@@ -383,6 +429,59 @@ export default function Tagestour() {
                           <span className="text-red-600">❌ Fehler</span>
                         )}
                       </div>
+                    </td>
+
+                    {/* Foto-Spalte */}
+                    <td className="border px-2 py-1 w-[260px]">
+                      {s.foto_url ? (
+                        <div className="flex items-start gap-3">
+                          <a
+                            href={s.foto_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block"
+                            title="Foto ansehen"
+                          >
+                            <img
+                              src={s.foto_url}
+                              alt="Stopp-Foto"
+                              className="w-24 h-24 object-cover rounded border"
+                            />
+                          </a>
+                          <div className="flex flex-col gap-2">
+                            <button
+                              className="px-3 py-1 rounded bg-red-500 text-white hover:bg-red-600 disabled:opacity-60"
+                              onClick={() => deleteFoto(s.id)}
+                              disabled={photoState[s.id] === "deleting"}
+                            >
+                              {photoState[s.id] === "deleting" ? "Lösche…" : "Foto löschen"}
+                            </button>
+                            {photoState[s.id] === "error" && (
+                              <span className="text-xs text-red-600">Fehler</span>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-2">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => onSelectPhoto(s.id, e.target.files?.[0] || null)}
+                          />
+                          <button
+                            className="px-3 py-1 rounded bg-[#0058A3] text-white hover:bg-blue-800 disabled:opacity-60"
+                            onClick={() => uploadFoto(s.id)}
+                            disabled={
+                              !fileByStopp[s.id] || photoState[s.id] === "uploading"
+                            }
+                          >
+                            {photoState[s.id] === "uploading" ? "Lade hoch…" : "Foto hochladen"}
+                          </button>
+                          {photoState[s.id] === "error" && (
+                            <span className="text-xs text-red-600">Fehler beim Upload</span>
+                          )}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
