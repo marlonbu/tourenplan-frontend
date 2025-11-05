@@ -1,13 +1,31 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api";
 
-// Formatierer
+// Datum hübsch formatiert
 function fmt(d) {
   try {
     return new Date(d).toLocaleDateString("de-DE");
   } catch {
     return d;
   }
+}
+
+// sichere Sortierung (Datum ↑, Position ↑, leere Positionen zuletzt)
+function sortRowsAsc(a, b) {
+  const dA = a.datum ?? "";
+  const dB = b.datum ?? "";
+  if (dA < dB) return -1;
+  if (dA > dB) return 1;
+
+  const posA = a.position;
+  const posB = b.position;
+
+  const aHas = Number.isFinite(posA);
+  const bHas = Number.isFinite(posB);
+  if (aHas && bHas) return posA - posB;
+  if (aHas && !bHas) return -1; // echte Zahlen vor null/undefined
+  if (!aHas && bHas) return 1;
+  return 0;
 }
 
 export default function Uebersicht() {
@@ -28,7 +46,8 @@ export default function Uebersicht() {
 
   useEffect(() => {
     ladeFahrer();
-    applyFilter(); // Initial
+    applyFilter(); // initial & beim Tab-Wechsel
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subTab]);
 
   async function ladeFahrer() {
@@ -44,25 +63,64 @@ export default function Uebersicht() {
     try {
       setLoading(true);
       setMsg("");
-      // Für "Woche" ignorieren wir Von/Bis und nutzen nur "kw"
+
+      // Filter für /touren-admin vorbereiten
       const payload =
         subTab === "woche"
           ? {
               fahrer_id: filterFahrer || undefined,
-              kw: filterKw || undefined,
+              kw: filterKw || undefined,          // YYYY-Www
               kunde: filterKunde || undefined,
             }
           : {
               fahrer_id: filterFahrer || undefined,
-              date_from: filterVon || undefined,
-              date_to: filterBis || undefined,
-              kw: filterKw || undefined, // darf zusätzlich genutzt werden
+              date_from: filterVon || undefined,  // YYYY-MM-DD
+              date_to: filterBis || undefined,    // YYYY-MM-DD
+              kw: filterKw || undefined,          // optional zusätzlich
               kunde: filterKunde || undefined,
             };
 
-      const data = await api.getStoppsUebersicht(payload);
-      setRows(data);
-      if (data.length === 0) setMsg("Keine Stopps gefunden.");
+      // 1) Touren holen
+      const touren = await api.getTourenAdmin(payload);
+
+      if (!Array.isArray(touren) || touren.length === 0) {
+        setRows([]);
+        setMsg("Keine Stopps gefunden.");
+        return;
+      }
+
+      // 2) Für jede Tour Stopps laden und auf Zeilen mappen (jede Zeile = ein Stopp)
+      const alleStoppsListen = await Promise.all(
+        touren.map(async (t) => {
+          try {
+            const stopps = await api.getStoppsByTour(t.id);
+            return (stopps || []).map((s) => ({
+              stopp_id: s.id,
+              datum: t.datum,                    // aus Tour
+              fahrer_name: t.fahrer_name,        // aus Tour
+              position: s.position ?? null,
+              kunde: s.kunde || "",
+              adresse: s.adresse || "",
+              telefon: s.telefon || "",
+              kommission: s.kommission || "",
+              hinweis: s.hinweis || "",
+              anmerkung_fahrer: s.anmerkung_fahrer || "",
+              tour_bemerkung: t.bemerkung || "",
+            }));
+          } catch (e) {
+            console.error(`Stopps für Tour ${t.id} laden fehlgeschlagen:`, e);
+            // Wenn eine Tour fehlschlägt, liefern wir einfach keine Stopps für diese Tour,
+            // die anderen Touren sollen trotzdem angezeigt werden.
+            return [];
+          }
+        })
+      );
+
+      // 3) Flatten + Sort
+      const flatRows = alleStoppsListen.flat().sort(sortRowsAsc);
+
+      setRows(flatRows);
+      if (flatRows.length === 0) setMsg("Keine Stopps gefunden.");
     } catch (err) {
       console.error("Stopps-Übersicht laden fehlgeschlagen:", err);
       setMsg("❌ Fehler beim Laden der Stopps-Übersicht");
@@ -223,9 +281,21 @@ export default function Uebersicht() {
                     <td className="border px-2 py-1">{r.position ?? ""}</td>
                     <td className="border px-2 py-1">{r.kunde}</td>
                     <td className="border px-2 py-1">{r.adresse}</td>
-                    <td className="border px-2 py-1">{r.telefon || <span className="text-gray-400">–</span>}</td>
-                    <td className="border px-2 py-1">{r.kommission || <span className="text-gray-400">–</span>}</td>
-                    <td className="border px-2 py-1">{r.hinweis || <span className="text-gray-400">–</span>}</td>
+                    <td className="border px-2 py-1">
+                      {r.telefon ? (
+                        <a className="text-blue-600 hover:underline" href={`tel:${r.telefon.replace(/\s+/g, "")}`}>
+                          {r.telefon}
+                        </a>
+                      ) : (
+                        <span className="text-gray-400">–</span>
+                      )}
+                    </td>
+                    <td className="border px-2 py-1">
+                      {r.kommission || <span className="text-gray-400">–</span>}
+                    </td>
+                    <td className="border px-2 py-1">
+                      {r.hinweis || <span className="text-gray-400">–</span>}
+                    </td>
                     <td className="border px-2 py-1">
                       {r.anmerkung_fahrer || <span className="text-gray-400">–</span>}
                     </td>
