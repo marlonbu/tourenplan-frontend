@@ -16,10 +16,15 @@ export default function Planung() {
     kommission: "",
     hinweis: "",
     position: "",
-    ankunft: "", // <— NEU: frei beschreibbares Feld
+    ankunft: "",
   });
 
   const [msg, setMsg] = useState("");
+
+  // Modal: Fahrer verwalten
+  const [showManage, setShowManage] = useState(false);
+  const [newDriverName, setNewDriverName] = useState("");
+  const [manageBusy, setManageBusy] = useState(false);
 
   useEffect(() => {
     ladeFahrer();
@@ -35,29 +40,7 @@ export default function Planung() {
     }
   }
 
-  async function addFahrer() {
-    const name = prompt("Name des neuen Fahrers:");
-    if (!name) return;
-    try {
-      await api.addFahrer(name);
-      ladeFahrer();
-    } catch (err) {
-      console.error("Fehler:", err);
-      setMsg("❌ Fahrer konnte nicht hinzugefügt werden");
-    }
-  }
-
-  async function deleteFahrer(id) {
-    if (!window.confirm("Fahrer wirklich löschen?")) return;
-    try {
-      await api.deleteFahrer(id);
-      ladeFahrer();
-    } catch (err) {
-      console.error("Fehler:", err);
-      setMsg("❌ Fahrer konnte nicht gelöscht werden");
-    }
-  }
-
+  // ---- Tour ----
   async function anlegenTour() {
     if (!selectedFahrer || !datum) {
       alert("Bitte Fahrer und Datum auswählen!");
@@ -97,7 +80,6 @@ export default function Planung() {
       return;
     }
 
-    // Pflichtfelder prüfen
     const payload = { ...neuStopp };
     if (!payload.kunde || !payload.adresse) {
       alert("Bitte mindestens Kunde und Adresse eingeben!");
@@ -131,6 +113,49 @@ export default function Planung() {
     }
   }
 
+  // ---- Fahrer verwalten (Modal) ----
+  function openManage() {
+    setNewDriverName("");
+    setShowManage(true);
+  }
+  function closeManage() {
+    if (manageBusy) return; // während Vorgang schließen verhindern
+    setShowManage(false);
+  }
+
+  async function modalAddFahrer() {
+    const name = newDriverName.trim();
+    if (!name) return;
+    try {
+      setManageBusy(true);
+      await api.addFahrer(name);
+      setNewDriverName("");
+      await ladeFahrer();
+    } catch (err) {
+      console.error("Fahrer hinzufügen fehlgeschlagen:", err);
+      alert("❌ Fahrer konnte nicht hinzugefügt werden");
+    } finally {
+      setManageBusy(false);
+    }
+  }
+
+  async function modalDeleteFahrer(id, name) {
+    const ok = window.confirm(`Fahrer „${name}“ wirklich löschen?`);
+    if (!ok) return;
+    try {
+      setManageBusy(true);
+      await api.deleteFahrer(id);
+      // Ausgewählten Fahrer zurücksetzen, falls gerade gelöscht
+      setSelectedFahrer((cur) => (String(cur) === String(id) ? "" : cur));
+      await ladeFahrer();
+    } catch (err) {
+      console.error("Fahrer löschen fehlgeschlagen:", err);
+      alert("❌ Fahrer konnte nicht gelöscht werden");
+    } finally {
+      setManageBusy(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold text-[#0058A3]">Tourenplanung</h1>
@@ -140,44 +165,29 @@ export default function Planung() {
         <h2 className="text-lg font-medium text-[#0058A3]">Fahrer</h2>
         {msg && <div className="text-sm text-gray-600">{msg}</div>}
 
-        <div className="flex flex-wrap gap-2">
-          <select
-            className="border rounded-md px-3 py-2"
-            value={selectedFahrer}
-            onChange={(e) => setSelectedFahrer(e.target.value)}
-          >
-            <option value="">– Fahrer auswählen –</option>
-            {fahrer.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name}
-              </option>
-            ))}
-          </select>
+        <div className="flex flex-wrap gap-2 items-end">
+          <div>
+            <label className="text-sm text-gray-600 block">Fahrer auswählen</label>
+            <select
+              className="border rounded-md px-3 py-2"
+              value={selectedFahrer}
+              onChange={(e) => setSelectedFahrer(e.target.value)}
+            >
+              <option value="">– Fahrer auswählen –</option>
+              {fahrer.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          </div>
 
           <button
-            onClick={addFahrer}
+            onClick={openManage}
             className="bg-[#0058A3] text-white px-3 py-2 rounded-md hover:bg-blue-800"
           >
-            + Fahrer
+            Fahrer verwalten
           </button>
-        </div>
-
-        <div className="mt-3">
-          {fahrer.map((f) => (
-            <span
-              key={f.id}
-              className="inline-flex items-center bg-gray-100 px-2 py-1 rounded mr-2 mb-2"
-            >
-              {f.name}
-              <button
-                onClick={() => deleteFahrer(f.id)}
-                className="ml-2 text-red-600 hover:text-red-800"
-                title="Fahrer löschen"
-              >
-                ×
-              </button>
-            </span>
-          ))}
         </div>
       </section>
 
@@ -242,7 +252,6 @@ export default function Planung() {
                 <th className="border px-2 py-1">Kommission</th>
                 <th className="border px-2 py-1">Hinweis</th>
                 <th className="border px-2 py-1">Ankunft</th>
-                {/* Keine Aktionen-Spalte mehr in Planung */}
               </tr>
             </thead>
             <tbody>
@@ -267,7 +276,7 @@ export default function Planung() {
             </tbody>
           </table>
 
-          {/* Formular Neuer Stopp (hier darf man hinzufügen) */}
+          {/* Formular Neuer Stopp */}
           <div className="border-t pt-4">
             <h3 className="text-md font-semibold mb-2 text-[#0058A3]">
               + Neuen Stopp hinzufügen
@@ -326,6 +335,89 @@ export default function Planung() {
             </button>
           </div>
         </section>
+      )}
+
+      {/* Modal: Fahrer verwalten */}
+      {showManage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black opacity-40"
+            onClick={closeManage}
+            aria-hidden="true"
+          />
+          {/* Dialog */}
+          <div className="relative bg-white rounded-lg shadow-lg w-full max-w-lg p-5 z-10">
+            <h3 className="text-lg font-semibold text-[#0058A3] mb-3">Fahrer verwalten</h3>
+
+            {/* Hinzufügen */}
+            <div className="flex gap-2 mb-4">
+              <input
+                className="border rounded-md px-3 py-2 w-full"
+                placeholder="Neuen Fahrername eingeben…"
+                value={newDriverName}
+                onChange={(e) => setNewDriverName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") modalAddFahrer();
+                }}
+                disabled={manageBusy}
+              />
+              <button
+                onClick={modalAddFahrer}
+                className="bg-[#0058A3] text-white px-3 py-2 rounded-md hover:bg-blue-800 disabled:opacity-60"
+                disabled={manageBusy || !newDriverName.trim()}
+              >
+                Hinzufügen
+              </button>
+            </div>
+
+            {/* Liste */}
+            <div className="max-h-64 overflow-auto border rounded-md">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-100">
+                  <tr>
+                    <th className="text-left px-3 py-2">Name</th>
+                    <th className="text-left px-3 py-2 w-28">Aktionen</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fahrer.length === 0 && (
+                    <tr>
+                      <td className="px-3 py-2 text-gray-500 italic" colSpan={2}>
+                        Keine Fahrer vorhanden
+                      </td>
+                    </tr>
+                  )}
+                  {fahrer.map((f) => (
+                    <tr key={f.id} className="border-t">
+                      <td className="px-3 py-2">{f.name}</td>
+                      <td className="px-3 py-2">
+                        <button
+                          className="px-3 py-1 rounded bg-red-500 text-white hover:bg-red-600 disabled:opacity-60"
+                          onClick={() => modalDeleteFahrer(f.id, f.name)}
+                          disabled={manageBusy}
+                          title="Fahrer löschen"
+                        >
+                          Löschen
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-4 text-right">
+              <button
+                onClick={closeManage}
+                className="bg-gray-200 px-4 py-2 rounded-md hover:bg-gray-300 disabled:opacity-60"
+                disabled={manageBusy}
+              >
+                Schließen
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
