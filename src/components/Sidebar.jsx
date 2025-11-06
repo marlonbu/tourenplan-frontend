@@ -1,11 +1,18 @@
+// src/components/Sidebar.jsx
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { LogOut } from "lucide-react";
 
 export default function Sidebar() {
   const location = useLocation();
-  const active = (path) =>
-    location.pathname === path ? "bg-white text-[#0058A3]" : "text-white hover:bg-blue-700/60";
+  const isActive = (path) => location.pathname === path;
+
+  const linkCls = (path) =>
+    `mx-3 my-1 px-3 py-2 rounded-lg flex items-center gap-2 transition ${
+      isActive(path)
+        ? "bg-white text-gehlenborg-blue shadow-soft"
+        : "text-white/90 hover:bg-gehlenborg-blue/60"
+    }`;
 
   const logout = () => {
     localStorage.removeItem("token");
@@ -13,32 +20,32 @@ export default function Sidebar() {
   };
 
   return (
-    <div className="flex flex-col justify-between bg-[#0058A3] text-white w-56 h-screen">
-      {/* Oben: Hauptnavigation */}
+    <div className="flex flex-col justify-between w-full">
+      {/* Logo / Titel */}
       <div>
-        <div className="flex items-center gap-2 p-4 text-lg font-semibold">
-          <span role="img" aria-label="truck">🚚</span>
-          <span className="text-white font-bold">Tourenplan</span>
+        <div className="px-4 pt-5 pb-4 flex items-center gap-3">
+          <span className="text-2xl" role="img" aria-label="truck">🚚</span>
+          <div>
+            <div className="font-bold">Tourenplan</div>
+            <div className="text-xs text-white/70">Gehlenborg</div>
+          </div>
         </div>
-        <nav className="flex flex-col">
-          <Link to="/planung" className={`px-4 py-3 ${active("/planung")}`}>
-            Planung
-          </Link>
-          <Link to="/tagestour" className={`px-4 py-3 ${active("/tagestour")}`}>
-            Tagestour
-          </Link>
-          <Link to="/gesamtuebersicht" className={`px-4 py-3 ${active("/gesamtuebersicht")}`}>
-            Gesamtübersicht
-          </Link>
+        <hr className="border-white/10 mx-3" />
+
+        {/* Navigation */}
+        <nav className="mt-3">
+          <Link to="/" className={linkCls("/")}>Planung</Link>
+          <Link to="/tagestour" className={linkCls("/tagestour")}>Tagestour</Link>
+          <Link to="/gesamtuebersicht" className={linkCls("/gesamtuebersicht")}>Gesamtübersicht</Link>
+          <Link to="/tourverwaltung" className={linkCls("/tourverwaltung")}>Tourverwaltung</Link>
         </nav>
       </div>
 
-      {/* Unten: Admin + Logout */}
-      <div className="p-4 border-t border-blue-800">
-        <p className="text-sm mb-2">Gehlenborg<br /><span className="text-xs">Rolle: Admin</span></p>
+      {/* Footer / Logout */}
+      <div className="px-4 py-4 border-t border-white/10">
         <button
           onClick={logout}
-          className="flex items-center gap-2 text-sm hover:text-gray-300"
+          className="w-full flex items-center justify-center gap-2 text-sm bg-white/10 hover:bg-white/15 rounded-lg py-2"
         >
           <LogOut size={16} /> Logout
         </button>
