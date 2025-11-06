@@ -1,5 +1,5 @@
 // src/pages/Tagestour.jsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import { api } from "../api";
 import {
   MapContainer,
@@ -302,17 +302,44 @@ export default function Tagestour() {
   const quickPhotoChooseStopp = (id) => {
     setStoppForQuickPhoto(id);
     setShowPhotoPicker(false);
-    // kleinen Tick warten, damit das Input gemountet ist
     setTimeout(() => {
       quickFileRef.current?.click();
     }, 0);
   };
-
   const handleQuickFileChange = (e) => {
     if (!stoppForQuickPhoto) return;
     uploadFoto(stoppForQuickPhoto, e.target);
     setStoppForQuickPhoto(null);
   };
+
+  // ------- Fortschritt & "Nächster Stopp" (Heuristik) -------
+  const sortedStopps = useMemo(() => {
+    return [...(stopps || [])].sort((a, b) => {
+      const pa = Number.isFinite(a?.position) ? a.position : Infinity;
+      const pb = Number.isFinite(b?.position) ? b.position : Infinity;
+      return pa - pb;
+    });
+  }, [stopps]);
+
+  const isDone = (s) => {
+    const note = (s?.anmerkung_fahrer || "").trim();
+    const pics = (fotosMap[s?.id] || []).length;
+    return !!note || pics > 0;
+  };
+
+  const progress = useMemo(() => {
+    const total = sortedStopps.length;
+    const done = sortedStopps.reduce((acc, s) => acc + (isDone(s) ? 1 : 0), 0);
+    return { total, done, pct: total > 0 ? Math.round((done / total) * 100) : 0 };
+  }, [sortedStopps, fotosMap]);
+
+  const nextIndex = useMemo(() => {
+    if (sortedStopps.length === 0) return -1;
+    const idx = sortedStopps.findIndex((s) => !isDone(s));
+    return idx >= 0 ? idx : 0; // wenn alle fertig, zeige ersten
+  }, [sortedStopps, fotosMap]);
+
+  const nextStopp = nextIndex >= 0 ? sortedStopps[nextIndex] : null;
 
   // Google-Maps Button URL (Firma -> ... -> letzter Kunde)
   const gmapsUrl = buildGoogleMapsRouteURL(GMAPS_ORIGIN, stopps);
@@ -366,6 +393,82 @@ export default function Tagestour() {
             <div><b>Tour-ID:</b> {tour.id}</div>
             <div><b>Fahrer:</b> {fahrer.find((f) => f.id === tour.fahrer_id)?.name}</div>
             <div><b>Datum:</b> {tour.datum}</div>
+          </div>
+        )}
+
+        {/* ✅ Neuer Sticky-Header: Aktuell/Nächster Stopp + Fortschritt */}
+        {tour && nextStopp && (
+          <div className="mt-4 border rounded-lg p-3 bg-gehlenborg-light/40">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[11px] uppercase tracking-wide text-gray-500">
+                  {progress.done > 0 && progress.done < progress.total ? "Aktuell / Nächster Stopp" : "Nächster Stopp"}
+                </div>
+                <div className="font-semibold text-sm truncate">{nextStopp.kunde}</div>
+                <a
+                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                    nextStopp.adresse || ""
+                  )}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-blue-600 hover:underline break-words"
+                >
+                  {nextStopp.adresse}
+                </a>
+                {nextStopp.ankunft ? (
+                  <div className="text-xs text-gray-600 mt-1">⏱️ Ankunft: <b>{nextStopp.ankunft}</b></div>
+                ) : null}
+              </div>
+
+              <div className="shrink-0 flex items-center gap-2">
+                <a
+                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                    nextStopp.adresse || ""
+                  )}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-2 rounded-md bg-white border hover:bg-gray-50 text-sm"
+                  title="In Google Maps öffnen"
+                >
+                  🗺️
+                </a>
+                {nextStopp.telefon ? (
+                  <a
+                    href={telHref(nextStopp.telefon)}
+                    className="px-3 py-2 rounded-md bg-white border hover:bg-gray-50 text-sm"
+                    title="Anrufen"
+                  >
+                    📞
+                  </a>
+                ) : null}
+                <button
+                  className="px-3 py-2 rounded-md bg-white border hover:bg-gray-50 text-sm"
+                  title="Schnell-Foto hochladen"
+                  onClick={() => {
+                    setStoppForQuickPhoto(nextStopp.id);
+                    setTimeout(() => quickFileRef.current?.click(), 0);
+                  }}
+                >
+                  📷
+                </button>
+              </div>
+            </div>
+
+            {/* Fortschritt */}
+            <div className="mt-3">
+              <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                <span>Fortschritt</span>
+                <span>
+                  {progress.done}/{progress.total} ({progress.pct}%)
+                </span>
+              </div>
+              <div className="h-2 w-full bg-white border rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-[#0058A3]"
+                  style={{ width: `${progress.pct}%` }}
+                />
+              </div>
+            </div>
           </div>
         )}
       </section>
@@ -762,7 +865,16 @@ export default function Tagestour() {
       {/* ======= Bottom Action-Bar (nur Mobil) ======= */}
       {tour && (
         <>
-          {/* Spacer ist oben bei Cards bereits eingefügt */}
+          {/* verstecktes File-Input für Schnell-Foto (auch für Next-Header) */}
+          <input
+            ref={quickFileRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={handleQuickFileChange}
+          />
+
           <div className="fixed md:hidden inset-x-0 bottom-0 z-40">
             <div className="mx-3 mb-3 rounded-xl shadow-lg border bg-white">
               <div className="grid grid-cols-3 divide-x">
@@ -796,16 +908,6 @@ export default function Tagestour() {
             </div>
           </div>
 
-          {/* verstecktes File-Input für Schnell-Foto */}
-          <input
-            ref={quickFileRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={handleQuickFileChange}
-          />
-
           {/* Photo-Picker Modal */}
           {showPhotoPicker && (
             <div className="fixed inset-0 z-50 md:hidden">
@@ -825,7 +927,7 @@ export default function Tagestour() {
                   </button>
                 </div>
                 <div className="space-y-2">
-                  {stopps.map((s) => {
+                  {sortedStopps.map((s) => {
                     const count = (fotosMap[s.id] || []).length;
                     const disabled = count >= 3 || fotoBusy[s.id];
                     return (
@@ -838,7 +940,9 @@ export default function Tagestour() {
                         onClick={() => quickPhotoChooseStopp(s.id)}
                         title={disabled ? "Maximal 3 Fotos" : "Diesem Stopp ein Foto hinzufügen"}
                       >
-                        <div className="text-sm font-medium">{s.kunde}</div>
+                        <div className="text-sm font-medium">
+                          {s.position != null ? `Pos ${s.position} – ` : ""}{s.kunde}
+                        </div>
                         <div className="text-xs text-gray-600 truncate">{s.adresse}</div>
                         <div className="text-[11px] text-gray-500 mt-1">{count}/3 Fotos</div>
                       </button>
@@ -868,10 +972,10 @@ export default function Tagestour() {
                   </button>
                 </div>
                 <div className="space-y-2">
-                  {stopps.filter((s) => !!s.telefon).length === 0 && (
+                  {sortedStopps.filter((s) => !!s.telefon).length === 0 && (
                     <div className="text-sm text-gray-600">Keine Telefonnummern vorhanden.</div>
                   )}
-                  {stopps
+                  {sortedStopps
                     .filter((s) => !!s.telefon)
                     .map((s) => (
                       <a
@@ -880,7 +984,9 @@ export default function Tagestour() {
                         className="block border rounded-lg px-3 py-2 hover:bg-gray-50"
                         onClick={() => setShowCallPicker(false)}
                       >
-                        <div className="text-sm font-medium">{s.kunde}</div>
+                        <div className="text-sm font-medium">
+                          {s.position != null ? `Pos ${s.position} – ` : ""}{s.kunde}
+                        </div>
                         <div className="text-xs text-gray-600">{s.telefon}</div>
                         <div className="text-[11px] text-gray-500 truncate">{s.adresse}</div>
                       </a>
