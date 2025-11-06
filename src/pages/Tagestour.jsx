@@ -1,5 +1,5 @@
 // src/pages/Tagestour.jsx
-import React, { useEffect, useRef, useState, useMemo } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import {
   MapContainer,
@@ -13,6 +13,7 @@ import L from "leaflet";
 
 // ---------- Fester Startpunkt (Firma) ----------
 const START_ADRESSE = "Hans Gehlenborg GmbH, Fehnstraße 3, 49699 Lindern";
+// Fixe Koordinaten (lat, lng)
 const FIRMA_COORDS = [52.8413511, 7.7705647];
 const GMAPS_ORIGIN = `${FIRMA_COORDS[0]},${FIRMA_COORDS[1]}`;
 
@@ -74,7 +75,9 @@ function telHref(raw) {
 
 // Google-Maps URL: origin = Firma (Koordinaten), destination = letzter Stopp, waypoints = restliche Stopps
 function buildGoogleMapsRouteURL(startOrigin, stopps) {
-  const addrs = (stopps || []).map((s) => s?.adresse).filter(Boolean);
+  const addrs = (stopps || [])
+    .map((s) => s?.adresse)
+    .filter(Boolean);
 
   if (addrs.length === 0) {
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
@@ -128,14 +131,10 @@ export default function Tagestour() {
   const timersRef = useRef({}); // Debounce Timer je Stopp-ID
 
   // ------- Fotos pro Stopp -------
-  const [fotosMap, setFotosMap] = useState({}); // { [stoppId]: [{id, url, created_at}] }
-  const [fotoBusy, setFotoBusy] = useState({}); // { [stoppId]: boolean }
-
-  // ------- Bottom Action-Bar (Mobil) -------
-  const [showPhotoPicker, setShowPhotoPicker] = useState(false);
-  const [showCallPicker, setShowCallPicker] = useState(false);
-  const [stoppForQuickPhoto, setStoppForQuickPhoto] = useState(null);
-  const quickFileRef = useRef(null);
+  // fotosMap: { [stoppId]: [{id, url, created_at}] }
+  const [fotosMap, setFotosMap] = useState({});
+  // busy: { [stoppId]: boolean } während Upload/Laden
+  const [fotoBusy, setFotoBusy] = useState({});
 
   useEffect(() => {
     ladeFahrer();
@@ -173,11 +172,11 @@ export default function Tagestour() {
       setStopps(s);
       setMsg(data.tour ? "✅ Tour geladen" : "ℹ️ Keine Tour gefunden");
 
-      // 1) Firma: feste Koordinaten
+      // 1) Firma: feste Koordinaten verwenden
       const firmCoord = FIRMA_COORDS;
       setStartCoord(firmCoord);
 
-      // 2) Stopps geokodieren
+      // 2) Stopps geokodieren (einzeln; Reihenfolge bleibt)
       const geos = [];
       for (const st of s) {
         if (!st?.adresse) {
@@ -204,15 +203,19 @@ export default function Tagestour() {
       const routeInput = [firmCoord, ...geos.map((g) => g.coord).filter(Boolean)].filter(
         Boolean
       );
+
       if (routeInput.length >= 2) {
         const line = await fetchOsrmRoute(routeInput);
-        if (line && line.length) setRouteCoords(line);
-        else setRouteCoords(routeInput);
+        if (line && line.length) {
+          setRouteCoords(line);
+        } else {
+          setRouteCoords(routeInput); // Fallback
+        }
       } else {
         setRouteCoords([]);
       }
 
-      // 5) Fotos je Stopp laden
+      // 5) Fotos je Stopp (nacheinander)
       for (const st of s) {
         await ladeFotos(st.id);
       }
@@ -283,10 +286,12 @@ export default function Tagestour() {
 
     timersRef.current[id] = setTimeout(() => saveAnmerkung(id, value), 1000);
   }
+
   function handleAnmerkungBlur(id, value) {
     if (timersRef.current[id]) clearTimeout(timersRef.current[id]);
     saveAnmerkung(id, value);
   }
+
   async function saveAnmerkung(id, value) {
     try {
       await api.updateStoppAnmerkung(id, value);
@@ -298,58 +303,15 @@ export default function Tagestour() {
     }
   }
 
-  // ------- Quick Actions (Bottom-Bar) -------
-  const quickPhotoChooseStopp = (id) => {
-    setStoppForQuickPhoto(id);
-    setShowPhotoPicker(false);
-    setTimeout(() => {
-      quickFileRef.current?.click();
-    }, 0);
-  };
-  const handleQuickFileChange = (e) => {
-    if (!stoppForQuickPhoto) return;
-    uploadFoto(stoppForQuickPhoto, e.target);
-    setStoppForQuickPhoto(null);
-  };
-
-  // ------- Fortschritt & "Nächster Stopp" (Heuristik) -------
-  const sortedStopps = useMemo(() => {
-    return [...(stopps || [])].sort((a, b) => {
-      const pa = Number.isFinite(a?.position) ? a.position : Infinity;
-      const pb = Number.isFinite(b?.position) ? b.position : Infinity;
-      return pa - pb;
-    });
-  }, [stopps]);
-
-  const isDone = (s) => {
-    const note = (s?.anmerkung_fahrer || "").trim();
-    const pics = (fotosMap[s?.id] || []).length;
-    return !!note || pics > 0;
-  };
-
-  const progress = useMemo(() => {
-    const total = sortedStopps.length;
-    const done = sortedStopps.reduce((acc, s) => acc + (isDone(s) ? 1 : 0), 0);
-    return { total, done, pct: total > 0 ? Math.round((done / total) * 100) : 0 };
-  }, [sortedStopps, fotosMap]);
-
-  const nextIndex = useMemo(() => {
-    if (sortedStopps.length === 0) return -1;
-    const idx = sortedStopps.findIndex((s) => !isDone(s));
-    return idx >= 0 ? idx : 0; // wenn alle fertig, zeige ersten
-  }, [sortedStopps, fotosMap]);
-
-  const nextStopp = nextIndex >= 0 ? sortedStopps[nextIndex] : null;
-
-  // Google-Maps Button URL (Firma -> ... -> letzter Kunde)
+  // Google-Maps Button URL (Firma -> ... -> letzter Kunde), Origin via Koordinaten
   const gmapsUrl = buildGoogleMapsRouteURL(GMAPS_ORIGIN, stopps);
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl md:text-3xl font-semibold text-[#0058A3]">Tagestour</h1>
 
-      {/* Auswahl (sticky auf Mobil) */}
-      <section className="bg-white p-4 rounded-lg shadow space-y-3 sticky top-0 z-30 md:static md:z-auto">
+      {/* Auswahl */}
+      <section className="bg-white p-4 rounded-lg shadow space-y-3">
         <h2 className="text-lg font-medium text-[#0058A3]">Tour laden</h2>
         {msg && <div className="text-sm text-gray-600">{msg}</div>}
 
@@ -389,254 +351,21 @@ export default function Tagestour() {
         </div>
 
         {tour && (
-          <div className="mt-2 text-xs sm:text-sm text-gray-700 grid gap-1 sm:grid-cols-3">
+          <div className="mt-4 text-sm text-gray-700 grid gap-1 sm:grid-cols-3">
             <div><b>Tour-ID:</b> {tour.id}</div>
             <div><b>Fahrer:</b> {fahrer.find((f) => f.id === tour.fahrer_id)?.name}</div>
             <div><b>Datum:</b> {tour.datum}</div>
           </div>
         )}
-
-        {/* ✅ Neuer Sticky-Header: Aktuell/Nächster Stopp + Fortschritt */}
-        {tour && nextStopp && (
-          <div className="mt-4 border rounded-lg p-3 bg-gehlenborg-light/40">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-[11px] uppercase tracking-wide text-gray-500">
-                  {progress.done > 0 && progress.done < progress.total ? "Aktuell / Nächster Stopp" : "Nächster Stopp"}
-                </div>
-                <div className="font-semibold text-sm truncate">{nextStopp.kunde}</div>
-                <a
-                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                    nextStopp.adresse || ""
-                  )}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-blue-600 hover:underline break-words"
-                >
-                  {nextStopp.adresse}
-                </a>
-                {nextStopp.ankunft ? (
-                  <div className="text-xs text-gray-600 mt-1">⏱️ Ankunft: <b>{nextStopp.ankunft}</b></div>
-                ) : null}
-              </div>
-
-              <div className="shrink-0 flex items-center gap-2">
-                <a
-                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                    nextStopp.adresse || ""
-                  )}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-3 py-2 rounded-md bg-white border hover:bg-gray-50 text-sm"
-                  title="In Google Maps öffnen"
-                >
-                  🗺️
-                </a>
-                {nextStopp.telefon ? (
-                  <a
-                    href={telHref(nextStopp.telefon)}
-                    className="px-3 py-2 rounded-md bg-white border hover:bg-gray-50 text-sm"
-                    title="Anrufen"
-                  >
-                    📞
-                  </a>
-                ) : null}
-                <button
-                  className="px-3 py-2 rounded-md bg-white border hover:bg-gray-50 text-sm"
-                  title="Schnell-Foto hochladen"
-                  onClick={() => {
-                    setStoppForQuickPhoto(nextStopp.id);
-                    setTimeout(() => quickFileRef.current?.click(), 0);
-                  }}
-                >
-                  📷
-                </button>
-              </div>
-            </div>
-
-            {/* Fortschritt */}
-            <div className="mt-3">
-              <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
-                <span>Fortschritt</span>
-                <span>
-                  {progress.done}/{progress.total} ({progress.pct}%)
-                </span>
-              </div>
-              <div className="h-2 w-full bg-white border rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-[#0058A3]"
-                  style={{ width: `${progress.pct}%` }}
-                />
-              </div>
-            </div>
-          </div>
-        )}
       </section>
 
-      {/* ======= MOBIL: Cards (unter md) ======= */}
-      {tour && (
-        <section className="md:hidden space-y-4">
-          {stopps.length === 0 ? (
-            <div className="bg-white rounded-lg shadow p-4 text-gray-500 italic">
-              Keine Stopps vorhanden
-            </div>
-          ) : null}
-
-          {stopps.map((s) => {
-            const fotos = fotosMap[s.id] || [];
-            const busy = !!fotoBusy[s.id];
-            const inputId = `foto-input-${s.id}`;
-            const count = fotos.length;
-
-            return (
-              <div key={s.id} className="bg-white rounded-lg shadow p-4 space-y-3">
-                {/* Kopf */}
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-xs text-gray-500">Pos. {s.position ?? "-"}</div>
-                    <div className="text-base font-semibold">{s.kunde}</div>
-                    <a
-                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                        s.adresse || ""
-                      )}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-sm text-blue-600 hover:underline break-words"
-                    >
-                      {s.adresse}
-                    </a>
-                    {s.ankunft ? (
-                      <div className="mt-1 text-xs text-gray-600">
-                        ⏱️ Ankunft: <b>{s.ankunft}</b>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  {/* Quick Aktionen pro Stopp */}
-                  <div className="shrink-0 flex gap-2">
-                    {s.telefon ? (
-                      <a
-                        href={telHref(s.telefon)}
-                        className="px-3 py-2 rounded-md bg-gray-100 hover:bg-gray-200 text-sm"
-                        title="Anrufen"
-                      >
-                        📞
-                      </a>
-                    ) : null}
-                    <a
-                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                        s.adresse || ""
-                      )}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-3 py-2 rounded-md bg-gray-100 hover:bg-gray-200 text-sm"
-                      title="In Google Maps öffnen"
-                    >
-                      🗺️
-                    </a>
-                  </div>
-                </div>
-
-                {/* Details */}
-                <div className="grid grid-cols-1 gap-2 text-sm text-gray-700">
-                  <div><span className="text-gray-500">Kommission:</span> {s.kommission || "–"}</div>
-                  <div><span className="text-gray-500">Hinweis:</span> {s.hinweis || "–"}</div>
-                </div>
-
-                {/* Fotos */}
-                <div className="pt-1">
-                  <div className="text-sm font-medium mb-2">
-                    Fotos <span className="text-gray-400 font-normal">({(fotos || []).length}/3)</span>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {/* Thumbnails */}
-                    {fotos.map((f) => (
-                      <div
-                        key={f.id}
-                        className="relative group border rounded-md overflow-hidden"
-                        style={{ width: 64, height: 64 }}
-                      >
-                        <a
-                          href={f.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title="Ansehen/Download"
-                        >
-                          <img
-                            src={f.url}
-                            alt="Stopp-Foto"
-                            className="w-full h-full object-cover"
-                          />
-                        </a>
-                        <button
-                          title="Foto löschen"
-                          onClick={() => deleteFoto(f.id, s.id)}
-                          className="absolute -top-2 -right-2 bg-white rounded-full shadow px-1 text-xs hover:bg-red-50"
-                        >
-                          🗑️
-                        </button>
-                      </div>
-                    ))}
-
-                    {/* 📷 Upload im Card-Kontext */}
-                    <label
-                      htmlFor={inputId}
-                      className={`cursor-pointer inline-flex items-center justify-center border rounded-md px-3 py-2 select-none ${
-                        (count >= 3 || busy) ? "opacity-50 pointer-events-none" : "hover:bg-gray-50"
-                      }`}
-                      title={count >= 3 ? "Maximal 3 Fotos" : "Foto aufnehmen/auswählen"}
-                    >
-                      📷
-                    </label>
-                    <input
-                      id={inputId}
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      className="hidden"
-                      onChange={(e) => uploadFoto(s.id, e.target)}
-                    />
-                    {busy && <span className="text-xs text-gray-500">Upload…</span>}
-                  </div>
-                </div>
-
-                {/* Anmerkung Fahrer */}
-                <div>
-                  <label className="block text-sm text-gray-700 mb-1">Anmerkung Fahrer</label>
-                  <textarea
-                    className="border rounded-md px-3 py-2 w-full resize-y min-h-[44px]"
-                    placeholder='z. B. "ok" oder Problem notieren'
-                    value={s.anmerkung_fahrer || ""}
-                    onChange={(e) => handleAnmerkungChange(s.id, e.target.value)}
-                    onBlur={(e) => handleAnmerkungBlur(s.id, e.target.value)}
-                  />
-                  <div className="text-xs mt-1 h-4">
-                    {saveState[s.id] === "saving" && (
-                      <span className="text-gray-500">💾 Speichern…</span>
-                    )}
-                    {saveState[s.id] === "saved" && (
-                      <span className="text-green-600">✅ Gespeichert</span>
-                    )}
-                    {saveState[s.id] === "error" && (
-                      <span className="text-red-600">❌ Fehler</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-
-          {/* Platzhalter, damit Bottom-Bar nichts überdeckt */}
-          <div className="h-[68px]" />
-        </section>
-      )}
-
-      {/* ======= DESKTOP: Tabelle (ab md) ======= */}
+      {/* Stopps */}
       {tour && (
         <>
-          <section className="bg-white p-4 rounded-lg shadow space-y-4 hidden md:block">
+          <section className="bg-white p-4 rounded-lg shadow space-y-4">
             <h2 className="text-lg font-medium text-[#0058A3]">Stopps dieser Tour</h2>
 
+            {/* Tabelle: mobil scrollbar */}
             <div className="overflow-x-auto -mx-2 md:mx-0">
               <table className="min-w-[1000px] w-full border text-sm md:text-[15px] mx-2 md:mx-0">
                 <thead className="bg-[#0058A3] text-white">
@@ -663,7 +392,7 @@ export default function Tagestour() {
                   {stopps.map((s, i) => {
                     const fotos = fotosMap[s.id] || [];
                     const busy = !!fotoBusy[s.id];
-                    const inputId = `foto-input-table-${s.id}`;
+                    const inputId = `foto-input-${s.id}`;
                     const count = fotos.length;
                     return (
                       <tr key={s.id || i} className="hover:bg-gray-50 align-top">
@@ -684,7 +413,10 @@ export default function Tagestour() {
                         </td>
                         <td className="border px-2 py-2">
                           {s.telefon ? (
-                            <a href={telHref(s.telefon)} className="text-blue-600 hover:underline">
+                            <a
+                              href={telHref(s.telefon)}
+                              className="text-blue-600 hover:underline"
+                            >
                               {s.telefon}
                             </a>
                           ) : (
@@ -697,14 +429,24 @@ export default function Tagestour() {
                         {/* Fotos-Spalte */}
                         <td className="border px-2 py-2 w-[260px]">
                           <div className="flex flex-wrap items-center gap-2">
+                            {/* Thumbnails */}
                             {fotos.map((f) => (
                               <div
                                 key={f.id}
                                 className="relative group border rounded-md overflow-hidden"
                                 style={{ width: 56, height: 56 }}
                               >
-                                <a href={f.url} target="_blank" rel="noopener noreferrer" title="Ansehen/Download">
-                                  <img src={f.url} alt="Stopp-Foto" className="w-full h-full object-cover" />
+                                <a
+                                  href={f.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title="Ansehen/Download"
+                                >
+                                  <img
+                                    src={f.url}
+                                    alt="Stopp-Foto"
+                                    className="w-full h-full object-cover"
+                                  />
                                 </a>
                                 <button
                                   title="Foto löschen"
@@ -715,10 +457,14 @@ export default function Tagestour() {
                                 </button>
                               </div>
                             ))}
+
+                            {/* 📷 Upload-Button */}
                             <label
                               htmlFor={inputId}
                               className={`cursor-pointer inline-flex items-center justify-center border rounded-md px-2 py-2 select-none ${
-                                count >= 3 || busy ? "opacity-50 pointer-events-none" : "hover:bg-gray-50"
+                                count >= 3 || busy
+                                  ? "opacity-50 pointer-events-none"
+                                  : "hover:bg-gray-50"
                               }`}
                               title={count >= 3 ? "Maximal 3 Fotos" : "Foto aufnehmen/auswählen"}
                             >
@@ -742,7 +488,9 @@ export default function Tagestour() {
                             className="border rounded-md px-2 py-2 w-full resize-y min-h-[44px]"
                             placeholder='z. B. "ok" oder Problem notieren'
                             value={s.anmerkung_fahrer || ""}
-                            onChange={(e) => handleAnmerkungChange(s.id, e.target.value)}
+                            onChange={(e) =>
+                              handleAnmerkungChange(s.id, e.target.value)
+                            }
                             onBlur={(e) => handleAnmerkungBlur(s.id, e.target.value)}
                           />
                           <div className="text-xs mt-1 h-4">
@@ -818,7 +566,11 @@ export default function Tagestour() {
                   {geoStopps
                     .filter((g) => !!g.coord)
                     .map(({ stopp, coord }, idx) => (
-                      <Marker key={stopp.id || idx} position={coord} icon={defaultIcon}>
+                      <Marker
+                        key={stopp.id || idx}
+                        position={coord}
+                        icon={defaultIcon}
+                      >
                         <Popup>
                           <div className="text-sm">
                             <b>{stopp.kunde}</b>
@@ -847,7 +599,10 @@ export default function Tagestour() {
                   {routeCoords.length > 0 && (
                     <>
                       <Polyline positions={routeCoords} />
-                      <FitToBounds lineCoords={routeCoords} markerCoords={markerCoords} />
+                      <FitToBounds
+                        lineCoords={routeCoords}
+                        markerCoords={markerCoords}
+                      />
                     </>
                   )}
 
@@ -859,142 +614,6 @@ export default function Tagestour() {
               </div>
             )}
           </section>
-        </>
-      )}
-
-      {/* ======= Bottom Action-Bar (nur Mobil) ======= */}
-      {tour && (
-        <>
-          {/* verstecktes File-Input für Schnell-Foto (auch für Next-Header) */}
-          <input
-            ref={quickFileRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={handleQuickFileChange}
-          />
-
-          <div className="fixed md:hidden inset-x-0 bottom-0 z-40">
-            <div className="mx-3 mb-3 rounded-xl shadow-lg border bg-white">
-              <div className="grid grid-cols-3 divide-x">
-                <a
-                  href={gmapsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex flex-col items-center justify-center py-3 active:bg-gray-50"
-                  title="Route in Google Maps"
-                >
-                  <div className="text-xl">🗺️</div>
-                  <div className="text-[11px] font-medium text-gray-700">Route</div>
-                </a>
-                <button
-                  className="flex flex-col items-center justify-center py-3 active:bg-gray-50 w-full"
-                  onClick={() => setShowPhotoPicker(true)}
-                  title="Schnell-Foto hochladen"
-                >
-                  <div className="text-xl">📷</div>
-                  <div className="text-[11px] font-medium text-gray-700">Foto</div>
-                </button>
-                <button
-                  className="flex flex-col items-center justify-center py-3 active:bg-gray-50 w-full"
-                  onClick={() => setShowCallPicker(true)}
-                  title="Stopps anrufen"
-                >
-                  <div className="text-xl">📞</div>
-                  <div className="text-[11px] font-medium text-gray-700">Anrufen</div>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Photo-Picker Modal */}
-          {showPhotoPicker && (
-            <div className="fixed inset-0 z-50 md:hidden">
-              <div
-                className="absolute inset-0 bg-black/40"
-                onClick={() => setShowPhotoPicker(false)}
-                aria-hidden="true"
-              />
-              <div className="absolute inset-x-0 bottom-0 bg-white rounded-t-2xl shadow-lg p-4 max-h-[70vh] overflow-auto">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-base font-semibold text-[#0058A3]">Schnell-Foto: Stopp wählen</h3>
-                  <button
-                    className="px-3 py-1 rounded bg-gray-100 hover:bg-gray-200"
-                    onClick={() => setShowPhotoPicker(false)}
-                  >
-                    Schließen
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  {sortedStopps.map((s) => {
-                    const count = (fotosMap[s.id] || []).length;
-                    const disabled = count >= 3 || fotoBusy[s.id];
-                    return (
-                      <button
-                        key={s.id}
-                        className={`w-full text-left border rounded-lg px-3 py-2 ${
-                          disabled ? "opacity-50 cursor-not-allowed" : "hover:bg-gray-50"
-                        }`}
-                        disabled={disabled}
-                        onClick={() => quickPhotoChooseStopp(s.id)}
-                        title={disabled ? "Maximal 3 Fotos" : "Diesem Stopp ein Foto hinzufügen"}
-                      >
-                        <div className="text-sm font-medium">
-                          {s.position != null ? `Pos ${s.position} – ` : ""}{s.kunde}
-                        </div>
-                        <div className="text-xs text-gray-600 truncate">{s.adresse}</div>
-                        <div className="text-[11px] text-gray-500 mt-1">{count}/3 Fotos</div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Call-Picker Modal */}
-          {showCallPicker && (
-            <div className="fixed inset-0 z-50 md:hidden">
-              <div
-                className="absolute inset-0 bg-black/40"
-                onClick={() => setShowCallPicker(false)}
-                aria-hidden="true"
-              />
-              <div className="absolute inset-x-0 bottom-0 bg-white rounded-t-2xl shadow-lg p-4 max-h-[70vh] overflow-auto">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-base font-semibold text-[#0058A3]">Anrufen: Stopp wählen</h3>
-                  <button
-                    className="px-3 py-1 rounded bg-gray-100 hover:bg-gray-200"
-                    onClick={() => setShowCallPicker(false)}
-                  >
-                    Schließen
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  {sortedStopps.filter((s) => !!s.telefon).length === 0 && (
-                    <div className="text-sm text-gray-600">Keine Telefonnummern vorhanden.</div>
-                  )}
-                  {sortedStopps
-                    .filter((s) => !!s.telefon)
-                    .map((s) => (
-                      <a
-                        key={s.id}
-                        href={telHref(s.telefon)}
-                        className="block border rounded-lg px-3 py-2 hover:bg-gray-50"
-                        onClick={() => setShowCallPicker(false)}
-                      >
-                        <div className="text-sm font-medium">
-                          {s.position != null ? `Pos ${s.position} – ` : ""}{s.kunde}
-                        </div>
-                        <div className="text-xs text-gray-600">{s.telefon}</div>
-                        <div className="text-[11px] text-gray-500 truncate">{s.adresse}</div>
-                      </a>
-                    ))}
-                </div>
-              </div>
-            </div>
-          )}
         </>
       )}
     </div>
