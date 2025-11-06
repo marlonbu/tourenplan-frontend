@@ -109,6 +109,128 @@ async function fetchOsrmRoute(coords) {
   return line.length ? line : null;
 }
 
+// ---------- Mobile-Karte pro Stopp (UI) ----------
+function MobileStoppCard({
+  s,
+  fotos = [],
+  count,
+  busy,
+  onUpload,
+  onDelete,
+  onChangeAnmerkung,
+  onBlurAnmerkung,
+}) {
+  const inputId = `foto-input-${s.id}`;
+
+  return (
+    <div className="bg-white rounded-xl shadow-soft p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-wide text-gray-500">Pos. {s.position ?? "-"}</div>
+          <div className="text-base font-semibold text-gray-900">{s.kunde}</div>
+          {s.ankunft ? (
+            <div className="text-sm text-gray-600">Ankunft: <b>{s.ankunft}</b></div>
+          ) : null}
+        </div>
+        {/* Kamera / Zähler */}
+        <div className="flex items-center gap-2">
+          <label
+            htmlFor={inputId}
+            className={`cursor-pointer inline-flex items-center justify-center rounded-lg border px-3 py-2 text-lg ${
+              count >= 3 || busy ? "opacity-50 pointer-events-none" : "hover:bg-gray-50"
+            }`}
+            title={count >= 3 ? "Maximal 3 Fotos" : "Foto aufnehmen/auswählen"}
+          >
+            📷
+          </label>
+          <input
+            id={inputId}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={(e) => onUpload(s.id, e.target)}
+          />
+          <span className="text-xs text-gray-600">{count}/3</span>
+        </div>
+      </div>
+
+      {/* Adresse / Telefon */}
+      <div className="text-sm text-gray-700">
+        <a
+          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+            s.adresse || ""
+          )}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-600 hover:underline"
+        >
+          {s.adresse}
+        </a>
+        {s.telefon ? (
+          <div className="mt-2">
+            <a
+              href={telHref(s.telefon)}
+              className="inline-flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-md px-3 py-2"
+            >
+              <span>📞</span>
+              <span>{s.telefon}</span>
+            </a>
+          </div>
+        ) : null}
+      </div>
+
+      {/* Kommission / Hinweis */}
+      <div className="grid grid-cols-2 gap-3 text-sm">
+        <div>
+          <div className="text-gray-500 text-xs">Kommission</div>
+          <div className="text-gray-800">{s.kommission || "—"}</div>
+        </div>
+        <div>
+          <div className="text-gray-500 text-xs">Hinweis</div>
+          <div className="text-gray-800">{s.hinweis || "—"}</div>
+        </div>
+      </div>
+
+      {/* Fotos: Thumbs */}
+      {fotos.length > 0 ? (
+        <div className="flex items-center gap-2">
+          {fotos.map((f) => (
+            <div
+              key={f.id}
+              className="relative border rounded-md overflow-hidden"
+              style={{ width: 64, height: 64 }}
+            >
+              <a href={f.url} target="_blank" rel="noopener noreferrer" title="Ansehen/Download">
+                <img src={f.url} alt="Stopp-Foto" className="w-full h-full object-cover" />
+              </a>
+              <button
+                title="Foto löschen"
+                onClick={() => onDelete(f.id, s.id)}
+                className="absolute -top-2 -right-2 bg-white rounded-full shadow px-1 text-xs hover:bg-red-50"
+              >
+                🗑️
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Anmerkung Fahrer */}
+      <div>
+        <div className="text-xs text-gray-500 mb-1">Anmerkung Fahrer</div>
+        <textarea
+          className="border rounded-md px-3 py-2 w-full min-h-[44px]"
+          placeholder='z. B. "ok" oder Problem notieren'
+          value={s.anmerkung_fahrer || ""}
+          onChange={(e) => onChangeAnmerkung(s.id, e.target.value)}
+          onBlur={(e) => onBlurAnmerkung(s.id, e.target.value)}
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function Tagestour() {
   const [fahrer, setFahrer] = useState([]);
   const [selectedFahrer, setSelectedFahrer] = useState("");
@@ -215,7 +337,7 @@ export default function Tagestour() {
         setRouteCoords([]);
       }
 
-      // 5) Fotos je Stopp laden (nacheinander, um Last zu reduzieren)
+      // 5) Fotos je Stopp (nacheinander)
       for (const st of s) {
         await ladeFotos(st.id);
       }
@@ -262,7 +384,7 @@ export default function Tagestour() {
     try {
       setFotoBusy((b) => ({ ...b, [stoppId]: true }));
       await api.deleteStoppFoto(fotoId);
-      // lokal entfernen (schneller) …
+      // lokal entfernen …
       setFotosMap((m) => ({
         ...m,
         [stoppId]: (m[stoppId] || []).filter((f) => f.id !== fotoId),
@@ -308,9 +430,8 @@ export default function Tagestour() {
   // Google-Maps Button URL (Firma -> ... -> letzter Kunde), Origin via Koordinaten
   const gmapsUrl = buildGoogleMapsRouteURL(GMAPS_ORIGIN, stopps);
 
-  // ---- Render ----
   return (
-    <div className="space-y-6 pb-16 md:pb-0">
+    <div className="space-y-6">
       <h1 className="text-2xl md:text-3xl font-semibold text-[#0058A3]">Tagestour</h1>
 
       {/* Auswahl */}
@@ -362,12 +483,14 @@ export default function Tagestour() {
         )}
       </section>
 
-      {/* ===== Desktop: Tabelle (ab md) ===== */}
+      {/* Stopps */}
       {tour && (
         <>
+          {/* Desktop/Tablet: Tabelle bleibt */}
           <section className="bg-white p-4 rounded-lg shadow space-y-4 hidden md:block">
             <h2 className="text-lg font-medium text-[#0058A3]">Stopps dieser Tour</h2>
 
+            {/* Tabelle: mobil scrollbar (nur Fallback, hier md:block) */}
             <div className="overflow-x-auto -mx-2 md:mx-0">
               <table className="min-w-[1000px] w-full border text-sm md:text-[15px] mx-2 md:mx-0">
                 <thead className="bg-[#0058A3] text-white">
@@ -428,7 +551,7 @@ export default function Tagestour() {
                         <td className="border px-2 py-2">{s.kommission}</td>
                         <td className="border px-2 py-2">{s.hinweis}</td>
 
-                        {/* Fotos */}
+                        {/* Fotos-Spalte */}
                         <td className="border px-2 py-2 w-[260px]">
                           <div className="flex flex-wrap items-center gap-2">
                             {fotos.map((f) => (
@@ -513,153 +636,40 @@ export default function Tagestour() {
             </div>
           </section>
 
-          {/* ===== Mobil: Cards (unter md) ===== */}
-          <section className="bg-white p-3 rounded-lg shadow space-y-3 md:hidden">
-            <h2 className="text-lg font-medium text-[#0058A3]">Stopps</h2>
-
-            {stopps.length === 0 && (
-              <div className="text-center py-3 text-gray-500 italic">
+          {/* Mobile: Karten-Ansicht je Stopp */}
+          <section className="space-y-3 md:hidden">
+            <h2 className="text-lg font-medium text-[#0058A3]">Stopps dieser Tour</h2>
+            {stopps.length === 0 ? (
+              <div className="bg-white rounded-xl shadow-soft p-4 text-sm text-gray-500 italic">
                 Keine Stopps vorhanden
               </div>
-            )}
+            ) : null}
 
-            <div className="space-y-3">
+            <div className="flex flex-col gap-3">
               {stopps.map((s) => {
                 const fotos = fotosMap[s.id] || [];
                 const busy = !!fotoBusy[s.id];
-                const inputId = `foto-input-m-${s.id}`;
                 const count = fotos.length;
 
                 return (
-                  <div key={s.id} className="border rounded-lg p-3 space-y-2">
-                    {/* Kopfzeile */}
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-sm text-gray-500">
-                          Pos {s.position ?? "–"}
-                          {s.ankunft ? (
-                            <span className="ml-2">• Ankunft: <b>{s.ankunft}</b></span>
-                          ) : null}
-                        </div>
-                        <div className="font-semibold">{s.kunde}</div>
-                        <a
-                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                            s.adresse || ""
-                          )}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 text-sm break-words"
-                        >
-                          {s.adresse}
-                        </a>
-                      </div>
-
-                      {/* Primäre Actions */}
-                      <div className="flex flex-col items-end gap-2 shrink-0">
-                        {s.telefon ? (
-                          <a
-                            href={telHref(s.telefon)}
-                            className="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm bg-[#0058A3] text-white"
-                          >
-                            Anrufen
-                          </a>
-                        ) : null}
-                        <a
-                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                            s.adresse || ""
-                          )}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm bg-gray-100"
-                        >
-                          Maps
-                        </a>
-                      </div>
-                    </div>
-
-                    {/* Sekundärinfos */}
-                    <div className="text-sm text-gray-600">
-                      {s.kommission ? <div>Kommission: {s.kommission}</div> : null}
-                      {s.hinweis ? <div>Hinweis: {s.hinweis}</div> : null}
-                    </div>
-
-                    {/* Fotos */}
-                    <div className="flex items-center flex-wrap gap-2">
-                      {fotos.map((f) => (
-                        <div
-                          key={f.id}
-                          className="relative border rounded-md overflow-hidden"
-                          style={{ width: 60, height: 60 }}
-                        >
-                          <a href={f.url} target="_blank" rel="noopener noreferrer">
-                            <img
-                              src={f.url}
-                              alt="Stopp-Foto"
-                              className="w-full h-full object-cover"
-                            />
-                          </a>
-                          <button
-                            onClick={() => deleteFoto(f.id, s.id)}
-                            className="absolute -top-2 -right-2 bg-white rounded-full shadow px-1 text-xs"
-                            title="Foto löschen"
-                          >
-                            🗑️
-                          </button>
-                        </div>
-                      ))}
-
-                      <label
-                        htmlFor={inputId}
-                        className={`cursor-pointer inline-flex items-center justify-center rounded-md px-3 py-2 border ${
-                          count >= 3 || busy
-                            ? "opacity-50 pointer-events-none"
-                            : "bg-gray-50"
-                        }`}
-                        title={count >= 3 ? "Maximal 3 Fotos" : "Foto aufnehmen/auswählen"}
-                      >
-                        📷
-                      </label>
-                      <input
-                        id={inputId}
-                        type="file"
-                        accept="image/*"
-                        capture="environment"
-                        className="hidden"
-                        onChange={(e) => uploadFoto(s.id, e.target)}
-                      />
-                      <span className="text-xs text-gray-600">{count}/3</span>
-                      {busy && <span className="text-xs text-gray-500">…</span>}
-                    </div>
-
-                    {/* Anmerkung Fahrer */}
-                    <div>
-                      <textarea
-                        className="border rounded-md px-2 py-2 w-full resize-y min-h-[44px]"
-                        placeholder='Anmerkung (z. B. "ok" oder Problem)'
-                        value={s.anmerkung_fahrer || ""}
-                        onChange={(e) => handleAnmerkungChange(s.id, e.target.value)}
-                        onBlur={(e) => handleAnmerkungBlur(s.id, e.target.value)}
-                      />
-                      <div className="text-xs mt-1 h-4">
-                        {saveState[s.id] === "saving" && (
-                          <span className="text-gray-500">💾 Speichern…</span>
-                        )}
-                        {saveState[s.id] === "saved" && (
-                          <span className="text-green-600">✅ Gespeichert</span>
-                        )}
-                        {saveState[s.id] === "error" && (
-                          <span className="text-red-600">❌ Fehler</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
+                  <MobileStoppCard
+                    key={s.id}
+                    s={s}
+                    fotos={fotos}
+                    count={count}
+                    busy={busy}
+                    onUpload={uploadFoto}
+                    onDelete={deleteFoto}
+                    onChangeAnmerkung={handleAnmerkungChange}
+                    onBlurAnmerkung={handleAnmerkungBlur}
+                  />
                 );
               })}
             </div>
           </section>
 
-          {/* Google Maps Button (zentriert) */}
-          <div className="w-full hidden md:flex items-center justify-center">
+          {/* Google Maps Button */}
+          <div className="w-full flex items-center justify-center">
             <a
               href={gmapsUrl}
               target="_blank"
@@ -759,25 +769,6 @@ export default function Tagestour() {
               </div>
             )}
           </section>
-
-          {/* ===== Mobile Bottom Bar ===== */}
-          <div className="md:hidden">
-            <div className="fixed left-0 right-0 bottom-0 z-30 bg-white/95 backdrop-blur border-t border-gray-200 mobile-bottom-bar px-3 py-2">
-              <div className="max-w-6xl mx-auto flex items-center gap-3">
-                <div className="text-sm text-gray-700">
-                  {stopps.length} Stopp{stopps.length === 1 ? "" : "s"}
-                </div>
-                <a
-                  href={gmapsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="ml-auto inline-flex items-center justify-center rounded-md bg-[#0058A3] text-white px-4 py-2"
-                >
-                  Route öffnen
-                </a>
-              </div>
-            </div>
-          </div>
         </>
       )}
     </div>
