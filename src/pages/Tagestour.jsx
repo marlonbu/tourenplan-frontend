@@ -130,6 +130,14 @@ export default function Tagestour() {
   const [saveState, setSaveState] = useState({}); // { [id]: "saving"|"saved"|"error"|"idle" }
   const timersRef = useRef({}); // Debounce Timer je Stopp-ID
 
+  // ---------- NEU: Fotos-States ----------
+  // fotosByStopp: { [stoppId]: [{id, url, created_at}, ...] }
+  const [fotosByStopp, setFotosByStopp] = useState({});
+  // Ladezustände je Stopp
+  const [fotosLoading, setFotosLoading] = useState({}); // { [stoppId]: true|false }
+  // Upload-Status je Stopp
+  const [uploading, setUploading] = useState({}); // { [stoppId]: true|false }
+
   useEffect(() => {
     ladeFahrer();
   }, []);
@@ -163,6 +171,9 @@ export default function Tagestour() {
       const s = data.stopps || [];
       setStopps(s);
       setMsg(data.tour ? "✅ Tour geladen" : "ℹ️ Keine Tour gefunden");
+
+      // Fotos pro Stopp laden
+      await ladeAlleStoppFotos(s);
 
       // 1) Firma: feste Koordinaten verwenden
       const firmCoord = FIRMA_COORDS;
@@ -211,6 +222,85 @@ export default function Tagestour() {
       setMsg("❌ Tour konnte nicht geladen werden");
     } finally {
       setLoading(false);
+    }
+  }
+
+  // ---------- NEU: Fotos laden ----------
+  async function ladeAlleStoppFotos(stoppsListe) {
+    const map = {};
+    // optional: Ladeindikator setzen
+    const fl = {};
+    for (const st of stoppsListe) fl[st.id] = true;
+    setFotosLoading((prev) => ({ ...prev, ...fl }));
+
+    try {
+      await Promise.allSettled(
+        (stoppsListe || []).map(async (st) => {
+          try {
+            const fotos = await api.getStoppFotos(st.id);
+            map[st.id] = fotos || [];
+          } catch {
+            map[st.id] = [];
+          } finally {
+            setFotosLoading((prev) => ({ ...prev, [st.id]: false }));
+          }
+        })
+      );
+    } finally {
+      setFotosByStopp(map);
+    }
+  }
+
+  async function ladeFotosEinesStopps(stoppId) {
+    setFotosLoading((prev) => ({ ...prev, [stoppId]: true }));
+    try {
+      const fotos = await api.getStoppFotos(stoppId);
+      setFotosByStopp((prev) => ({ ...prev, [stoppId]: fotos || [] }));
+    } catch {
+      setFotosByStopp((prev) => ({ ...prev, [stoppId]: [] }));
+    } finally {
+      setFotosLoading((prev) => ({ ...prev, [stoppId]: false }));
+    }
+  }
+
+  // ---------- NEU: Upload / Delete ----------
+  async function handleFotoUpload(stoppId, fileList) {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+
+    const aktuelle = fotosByStopp[stoppId] || [];
+    if (aktuelle.length >= 3) {
+      alert("Maximal 3 Fotos pro Stopp.");
+      return;
+    }
+
+    setUploading((u) => ({ ...u, [stoppId]: true }));
+    try {
+      // Wir laden mehrere nacheinander, brechen ab wenn Limit erreicht
+      let rest = 3 - aktuelle.length;
+      for (const f of files) {
+        if (rest <= 0) break;
+        await api.uploadStoppFoto(stoppId, f);
+        rest--;
+      }
+      await ladeFotosEinesStopps(stoppId);
+    } catch (e) {
+      console.error(e);
+      alert("Foto-Upload fehlgeschlagen.");
+    } finally {
+      setUploading((u) => ({ ...u, [stoppId]: false }));
+    }
+  }
+
+  async function handleFotoDelete(stoppId, fotoId) {
+    const ok = confirm("Dieses Foto wirklich löschen?");
+    if (!ok) return;
+    try {
+      await api.deleteStoppFoto(fotoId);
+      await ladeFotosEinesStopps(stoppId);
+    } catch (e) {
+      console.error(e);
+      alert("Foto konnte nicht gelöscht werden.");
     }
   }
 
@@ -306,7 +396,7 @@ export default function Tagestour() {
 
             {/* Tabelle: mobil scrollbar */}
             <div className="overflow-x-auto -mx-2 md:mx-0">
-              <table className="min-w-[900px] w-full border text-sm md:text-[15px] mx-2 md:mx-0">
+              <table className="min-w-[1050px] w-full border text-sm md:text-[15px] mx-2 md:mx-0">
                 <thead className="bg-[#0058A3] text-white">
                   <tr>
                     <th className="border px-2 py-2">Pos</th>
@@ -316,72 +406,151 @@ export default function Tagestour() {
                     <th className="border px-2 py-2">Telefon</th>
                     <th className="border px-2 py-2">Kommission</th>
                     <th className="border px-2 py-2">Hinweis</th>
+                    <th className="border px-2 py-2">Fotos</th> {/* NEU */}
                     <th className="border px-2 py-2">Anmerkung Fahrer</th>
                   </tr>
                 </thead>
                 <tbody>
                   {stopps.length === 0 && (
                     <tr>
-                      <td colSpan="8" className="text-center py-3 text-gray-500 italic">
+                      <td colSpan="9" className="text-center py-3 text-gray-500 italic">
                         Keine Stopps vorhanden
                       </td>
                     </tr>
                   )}
-                  {stopps.map((s, i) => (
-                    <tr key={s.id || i} className="hover:bg-gray-50 align-top">
-                      <td className="border px-2 py-2 text-center">{s.position}</td>
-                      <td className="border px-2 py-2">{s.ankunft || ""}</td>
-                      <td className="border px-2 py-2">{s.kunde}</td>
-                      <td className="border px-2 py-2">
-                        <a
-                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                            s.adresse || ""
-                          )}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 hover:underline break-words"
-                        >
-                          {s.adresse}
-                        </a>
-                      </td>
-                      <td className="border px-2 py-2">
-                        {s.telefon ? (
+                  {stopps.map((s, i) => {
+                    const fotos = fotosByStopp[s.id] || [];
+                    const isLoadingFotos = !!fotosLoading[s.id];
+                    const isUploading = !!uploading[s.id];
+
+                    return (
+                      <tr key={s.id || i} className="hover:bg-gray-50 align-top">
+                        <td className="border px-2 py-2 text-center">{s.position}</td>
+                        <td className="border px-2 py-2">{s.ankunft || ""}</td>
+                        <td className="border px-2 py-2">{s.kunde}</td>
+                        <td className="border px-2 py-2">
                           <a
-                            href={telHref(s.telefon)}
-                            className="text-blue-600 hover:underline"
+                            href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                              s.adresse || ""
+                            )}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:underline break-words"
                           >
-                            {s.telefon}
+                            {s.adresse}
                           </a>
-                        ) : (
-                          ""
-                        )}
-                      </td>
-                      <td className="border px-2 py-2">{s.kommission}</td>
-                      <td className="border px-2 py-2">{s.hinweis}</td>
-                      <td className="border px-2 py-2 w-[280px] md:w-[320px]">
-                        <textarea
-                          className="border rounded-md px-2 py-2 w-full resize-y min-h-[44px]"
-                          placeholder='z. B. "ok" oder Problem notieren'
-                          value={s.anmerkung_fahrer || ""}
-                          onChange={(e) =>
-                            handleAnmerkungChange(s.id, e.target.value)
-                          }
-                          onBlur={(e) => handleAnmerkungBlur(s.id, e.target.value)}
-                        />
-                        <div className="text-xs mt-1 h-4">
-                          {saveState[s.id] === "saving" && (
-                            <span className="text-gray-500">💾 Speichern…</span>
+                        </td>
+                        <td className="border px-2 py-2">
+                          {s.telefon ? (
+                            <a
+                              href={telHref(s.telefon)}
+                              className="text-blue-600 hover:underline"
+                            >
+                              {s.telefon}
+                            </a>
+                          ) : (
+                            ""
                           )}
-                          {saveState[s.id] === "saved" && (
-                            <span className="text-green-600">✅ Gespeichert</span>
+                        </td>
+                        <td className="border px-2 py-2">{s.kommission}</td>
+                        <td className="border px-2 py-2">{s.hinweis}</td>
+
+                        {/* NEU: Fotos-Spalte */}
+                        <td className="border px-2 py-2 w-[260px]">
+                          {isLoadingFotos ? (
+                            <div className="text-gray-500 italic">Lade Fotos…</div>
+                          ) : (
+                            <>
+                              {fotos.length === 0 && (
+                                <div className="text-gray-400 text-sm mb-2">Keine Fotos</div>
+                              )}
+
+                              <div className="flex flex-wrap gap-2 mb-2">
+                                {fotos.map((f) => (
+                                  <div
+                                    key={f.id}
+                                    className="relative w-16 h-16 rounded overflow-hidden border"
+                                    title={new Date(f.created_at).toLocaleString()}
+                                  >
+                                    <a
+                                      href={f.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="block w-full h-full"
+                                    >
+                                      <img
+                                        src={f.url}
+                                        alt="Foto"
+                                        className="object-cover w-full h-full"
+                                      />
+                                    </a>
+                                    <button
+                                      onClick={() => handleFotoDelete(s.id, f.id)}
+                                      className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full w-6 h-6 text-xs shadow"
+                                      title="Foto löschen"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+
+                              {/* Upload */}
+                              <label className="inline-flex items-center gap-2 cursor-pointer">
+                                <span className="px-2 py-1 rounded bg-[#0058A3] text-white text-xs hover:bg-blue-800">
+                                  + Foto
+                                </span>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  capture="environment"
+                                  multiple
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const files = e.target.files;
+                                    e.target.value = "";
+                                    handleFotoUpload(s.id, files);
+                                  }}
+                                  disabled={isUploading || (fotos?.length || 0) >= 3}
+                                />
+                              </label>
+                              {isUploading && (
+                                <div className="text-xs text-gray-500 mt-1">Lade hoch…</div>
+                              )}
+                              {(fotos?.length || 0) >= 3 && (
+                                <div className="text-xs text-gray-500 mt-1">
+                                  Max. 3 Fotos erreicht
+                                </div>
+                              )}
+                            </>
                           )}
-                          {saveState[s.id] === "error" && (
-                            <span className="text-red-600">❌ Fehler</span>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+
+                        <td className="border px-2 py-2 w-[280px] md:w-[320px]">
+                          <textarea
+                            className="border rounded-md px-2 py-2 w-full resize-y min-h-[44px]"
+                            placeholder='z. B. "ok" oder Problem notieren'
+                            value={s.anmerkung_fahrer || ""}
+                            onChange={(e) =>
+                              handleAnmerkungChange(s.id, e.target.value)
+                            }
+                            onBlur={(e) => handleAnmerkungBlur(s.id, e.target.value)}
+                          />
+                          <div className="text-xs mt-1 h-4">
+                            {saveState[s.id] === "saving" && (
+                              <span className="text-gray-500">💾 Speichern…</span>
+                            )}
+                            {saveState[s.id] === "saved" && (
+                              <span className="text-green-600">✅ Gespeichert</span>
+                            )}
+                            {saveState[s.id] === "error" && (
+                              <span className="text-red-600">❌ Fehler</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
