@@ -69,7 +69,7 @@ async function geocodeAdresse(addr) {
 
 function telHref(raw) {
   if (!raw) return "";
-  const cleaned = raw.replace(/[()\s\-\/]/g, "");
+  const cleaned = String(raw).replace(/[()\s\-\/]/g, "");
   return `tel:${cleaned}`;
 }
 
@@ -135,6 +135,13 @@ export default function Tagestour() {
   const [fotosMap, setFotosMap] = useState({});
   // busy: { [stoppId]: boolean } während Upload/Laden
   const [fotoBusy, setFotoBusy] = useState({});
+
+  // Refs für die versteckten Datei-Inputs (für Schnell-Foto)
+  const fileInputRefs = useRef({}); // { [stoppId]: HTMLInputElement }
+
+  // Bottom-Action-Bar: Modals/Sheets
+  const [showQuickPhoto, setShowQuickPhoto] = useState(false);
+  const [showCallSheet, setShowCallSheet] = useState(false);
 
   useEffect(() => {
     ladeFahrer();
@@ -306,8 +313,25 @@ export default function Tagestour() {
   // Google-Maps Button URL (Firma -> ... -> letzter Kunde), Origin via Koordinaten
   const gmapsUrl = buildGoogleMapsRouteURL(GMAPS_ORIGIN, stopps);
 
+  // Quick-Foto: ausgewählten Stopp anklicken -> zugehörigen versteckten Input triggern
+  function triggerQuickPhoto(stoppId) {
+    const el =
+      document.getElementById(`foto-input-${stoppId}`) ||
+      fileInputRefs.current[stoppId];
+    if (el) {
+      el.click();
+    } else {
+      alert("Kein Uploadfeld gefunden.");
+    }
+    setShowQuickPhoto(false);
+  }
+
+  // Nur Stopps mit Telefonnummer für Sheet
+  const stoppsMitTelefon = stopps.filter((s) => !!s.telefon);
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-24 md:pb-6">
+      {/* pb-24: Platz für Bottom Action-Bar auf Mobil */}
       <h1 className="text-2xl md:text-3xl font-semibold text-[#0058A3]">Tagestour</h1>
 
       {/* Auswahl */}
@@ -362,10 +386,148 @@ export default function Tagestour() {
       {/* Stopps */}
       {tour && (
         <>
-          <section className="bg-white p-4 rounded-lg shadow space-y-4">
-            <h2 className="text-lg font-medium text-[#0058A3]">Stopps dieser Tour</h2>
+          {/* ---- MOBILE: Card-Ansicht (unter md) ---- */}
+          <section className="md:hidden space-y-3">
+            {stopps.length === 0 && (
+              <div className="bg-white p-4 rounded-lg shadow text-gray-500 italic">
+                Keine Stopps vorhanden
+              </div>
+            )}
 
-            {/* Tabelle: mobil scrollbar */}
+            {stopps.map((s) => {
+              const fotos = fotosMap[s.id] || [];
+              const busy = !!fotoBusy[s.id];
+              const inputId = `foto-input-${s.id}`;
+              const count = fotos.length;
+              return (
+                <div key={s.id} className="bg-white rounded-lg shadow p-4 space-y-3">
+                  {/* Kopf */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-xs text-gray-500">Pos. {s.position ?? "-"}</div>
+                      <div className="text-base font-semibold">{s.kunde}</div>
+                      <a
+                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                          s.adresse || ""
+                        )}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-blue-600 hover:underline break-words"
+                      >
+                        {s.adresse}
+                      </a>
+                      {s.telefon ? (
+                        <div className="mt-1">
+                          <a href={telHref(s.telefon)} className="text-sm text-blue-600 hover:underline">
+                            {s.telefon}
+                          </a>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="text-right text-sm text-gray-600">
+                      {s.ankunft ? (
+                        <div>
+                          <span className="font-medium">Ankunft:</span> {s.ankunft}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {/* Details */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                    <div>
+                      <span className="text-gray-500">Kommission: </span>
+                      <span>{s.kommission || "–"}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Hinweis: </span>
+                      <span>{s.hinweis || "–"}</span>
+                    </div>
+                  </div>
+
+                  {/* Fotos */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {fotos.map((f) => (
+                      <div
+                        key={f.id}
+                        className="relative group border rounded-md overflow-hidden"
+                        style={{ width: 64, height: 64 }}
+                      >
+                        <a
+                          href={f.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Ansehen/Download"
+                        >
+                          <img
+                            src={f.url}
+                            alt="Stopp-Foto"
+                            className="w-full h-full object-cover"
+                          />
+                        </a>
+                        <button
+                          title="Foto löschen"
+                          onClick={() => deleteFoto(f.id, s.id)}
+                          className="absolute -top-2 -right-2 bg-white rounded-full shadow px-1 text-xs hover:bg-red-50"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    ))}
+
+                    {/* Upload */}
+                    <label
+                      htmlFor={inputId}
+                      className={`cursor-pointer inline-flex items-center justify-center border rounded-md px-3 py-2 select-none ${
+                        count >= 3 || busy ? "opacity-50 pointer-events-none" : "hover:bg-gray-50"
+                      }`}
+                      title={count >= 3 ? "Maximal 3 Fotos" : "Foto aufnehmen/auswählen"}
+                    >
+                      <span className="text-lg">📷</span>
+                    </label>
+                    <input
+                      id={inputId}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      className="hidden"
+                      ref={(el) => (fileInputRefs.current[s.id] = el)}
+                      onChange={(e) => uploadFoto(s.id, e.target)}
+                    />
+                    <span className="text-xs text-gray-600">{count}/3</span>
+                    {busy && <span className="text-xs text-gray-500">…</span>}
+                  </div>
+
+                  {/* Anmerkung Fahrer */}
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Anmerkung Fahrer</label>
+                    <textarea
+                      className="border rounded-md px-2 py-2 w-full resize-y min-h-[48px]"
+                      placeholder='z. B. "ok" oder Problem notieren'
+                      value={s.anmerkung_fahrer || ""}
+                      onChange={(e) => handleAnmerkungChange(s.id, e.target.value)}
+                      onBlur={(e) => handleAnmerkungBlur(s.id, e.target.value)}
+                    />
+                    <div className="text-xs mt-1 h-4">
+                      {saveState[s.id] === "saving" && (
+                        <span className="text-gray-500">💾 Speichern…</span>
+                      )}
+                      {saveState[s.id] === "saved" && (
+                        <span className="text-green-600">✅ Gespeichert</span>
+                      )}
+                      {saveState[s.id] === "error" && (
+                        <span className="text-red-600">❌ Fehler</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </section>
+
+          {/* ---- DESKTOP: Tabelle (ab md) ---- */}
+          <section className="hidden md:block bg-white p-4 rounded-lg shadow space-y-4">
+            <h2 className="text-lg font-medium text-[#0058A3]">Stopps dieser Tour</h2>
             <div className="overflow-x-auto -mx-2 md:mx-0">
               <table className="min-w-[1000px] w-full border text-sm md:text-[15px] mx-2 md:mx-0">
                 <thead className="bg-[#0058A3] text-white">
@@ -429,7 +591,6 @@ export default function Tagestour() {
                         {/* Fotos-Spalte */}
                         <td className="border px-2 py-2 w-[260px]">
                           <div className="flex flex-wrap items-center gap-2">
-                            {/* Thumbnails */}
                             {fotos.map((f) => (
                               <div
                                 key={f.id}
@@ -476,6 +637,7 @@ export default function Tagestour() {
                               accept="image/*"
                               capture="environment"
                               className="hidden"
+                              ref={(el) => (fileInputRefs.current[s.id] = el)}
                               onChange={(e) => uploadFoto(s.id, e.target)}
                             />
                             <span className="text-xs text-gray-600">{count}/3</span>
@@ -488,9 +650,7 @@ export default function Tagestour() {
                             className="border rounded-md px-2 py-2 w-full resize-y min-h-[44px]"
                             placeholder='z. B. "ok" oder Problem notieren'
                             value={s.anmerkung_fahrer || ""}
-                            onChange={(e) =>
-                              handleAnmerkungChange(s.id, e.target.value)
-                            }
+                            onChange={(e) => handleAnmerkungChange(s.id, e.target.value)}
                             onBlur={(e) => handleAnmerkungBlur(s.id, e.target.value)}
                           />
                           <div className="text-xs mt-1 h-4">
@@ -513,7 +673,7 @@ export default function Tagestour() {
             </div>
           </section>
 
-          {/* Google Maps Button */}
+          {/* Google Maps Button (zentral) */}
           <div className="w-full flex items-center justify-center">
             <a
               href={gmapsUrl}
@@ -614,6 +774,123 @@ export default function Tagestour() {
               </div>
             )}
           </section>
+        </>
+      )}
+
+      {/* ====== FIXE BOTTOM ACTION-BAR (nur mobil) ====== */}
+      {tour && (
+        <>
+          <div className="md:hidden fixed bottom-0 inset-x-0 bg-white border-t shadow-[0_-2px_10px_rgba(0,0,0,0.06)]">
+            <div className="max-w-6xl mx-auto px-3 py-2 grid grid-cols-3 gap-2">
+              <a
+                href={gmapsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 rounded-md bg-[#0058A3] text-white py-2"
+              >
+                🗺️ <span className="text-sm font-medium">Route</span>
+              </a>
+
+              <button
+                className="flex items-center justify-center gap-2 rounded-md bg-gray-100 text-gray-800 py-2"
+                onClick={() => setShowQuickPhoto(true)}
+              >
+                📷 <span className="text-sm font-medium">Foto</span>
+              </button>
+
+              <button
+                className="flex items-center justify-center gap-2 rounded-md bg-gray-100 text-gray-800 py-2"
+                onClick={() => setShowCallSheet(true)}
+              >
+                📞 <span className="text-sm font-medium">Anrufen</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Schnell-Foto: Auswahl Sheet */}
+          {showQuickPhoto && (
+            <div className="md:hidden fixed inset-0 z-50">
+              <div
+                className="absolute inset-0 bg-black/40"
+                onClick={() => setShowQuickPhoto(false)}
+              />
+              <div className="absolute bottom-0 inset-x-0 bg-white rounded-t-2xl p-4 max-h-[70vh] overflow-auto shadow-lg">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-lg font-semibold text-[#0058A3]">Schnell-Foto</h3>
+                  <button
+                    className="text-sm bg-gray-200 px-3 py-1 rounded"
+                    onClick={() => setShowQuickPhoto(false)}
+                  >
+                    Schließen
+                  </button>
+                </div>
+                <p className="text-sm text-gray-600 mb-3">
+                  Wähle einen Stopp aus, um direkt ein Foto aufzunehmen/hochzuladen.
+                </p>
+                <div className="divide-y">
+                  {stopps.map((s) => {
+                    const count = (fotosMap[s.id] || []).length;
+                    const disabled = count >= 3 || !!fotoBusy[s.id];
+                    return (
+                      <button
+                        key={s.id}
+                        className={`w-full text-left py-3 ${disabled ? "opacity-50" : "hover:bg-gray-50"} px-1`}
+                        onClick={() => !disabled && triggerQuickPhoto(s.id)}
+                        disabled={disabled}
+                      >
+                        <div className="font-medium">{s.kunde}</div>
+                        <div className="text-xs text-gray-500 break-words">{s.adresse}</div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          Fotos: {(fotosMap[s.id] || []).length}/3
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Anrufen: Liste aller Stopps mit Telefonnummer */}
+          {showCallSheet && (
+            <div className="md:hidden fixed inset-0 z-50">
+              <div
+                className="absolute inset-0 bg-black/40"
+                onClick={() => setShowCallSheet(false)}
+              />
+              <div className="absolute bottom-0 inset-x-0 bg-white rounded-t-2xl p-4 max-h-[70vh] overflow-auto shadow-lg">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-lg font-semibold text-[#0058A3]">Nummern anrufen</h3>
+                  <button
+                    className="text-sm bg-gray-200 px-3 py-1 rounded"
+                    onClick={() => setShowCallSheet(false)}
+                  >
+                    Schließen
+                  </button>
+                </div>
+                {stoppsMitTelefon.length === 0 ? (
+                  <div className="text-sm text-gray-600">Keine Telefonnummern vorhanden.</div>
+                ) : (
+                  <div className="space-y-2">
+                    {stoppsMitTelefon.map((s) => (
+                      <a
+                        key={s.id}
+                        href={telHref(s.telefon)}
+                        className="flex items-start justify-between gap-3 border rounded-lg p-3 hover:bg-gray-50"
+                        onClick={() => setShowCallSheet(false)}
+                      >
+                        <div>
+                          <div className="font-medium">{s.kunde}</div>
+                          <div className="text-xs text-gray-500 break-words">{s.adresse}</div>
+                        </div>
+                        <div className="text-[#0058A3] text-sm font-medium">{s.telefon}</div>
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
