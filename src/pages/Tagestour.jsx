@@ -128,10 +128,14 @@ export default function Tagestour() {
   const timersRef = useRef({}); // Debounce Timer je Stopp-ID
 
   // ------- Fotos pro Stopp -------
-  // fotosMap: { [stoppId]: [{id, url, created_at}] }
-  const [fotosMap, setFotosMap] = useState({});
-  // busy: { [stoppId]: boolean } während Upload/Laden
-  const [fotoBusy, setFotoBusy] = useState({});
+  const [fotosMap, setFotosMap] = useState({}); // { [stoppId]: [{id, url, created_at}] }
+  const [fotoBusy, setFotoBusy] = useState({}); // { [stoppId]: boolean }
+
+  // ------- Bottom Action-Bar (Mobil) -------
+  const [showPhotoPicker, setShowPhotoPicker] = useState(false);
+  const [showCallPicker, setShowCallPicker] = useState(false);
+  const [stoppForQuickPhoto, setStoppForQuickPhoto] = useState(null);
+  const quickFileRef = useRef(null);
 
   useEffect(() => {
     ladeFahrer();
@@ -173,7 +177,7 @@ export default function Tagestour() {
       const firmCoord = FIRMA_COORDS;
       setStartCoord(firmCoord);
 
-      // 2) Stopps geokodieren (einzeln; Reihenfolge bleibt)
+      // 2) Stopps geokodieren
       const geos = [];
       for (const st of s) {
         if (!st?.adresse) {
@@ -203,7 +207,7 @@ export default function Tagestour() {
       if (routeInput.length >= 2) {
         const line = await fetchOsrmRoute(routeInput);
         if (line && line.length) setRouteCoords(line);
-        else setRouteCoords(routeInput); // Fallback
+        else setRouteCoords(routeInput);
       } else {
         setRouteCoords([]);
       }
@@ -293,6 +297,22 @@ export default function Tagestour() {
       setSaveState((st) => ({ ...st, [id]: "error" }));
     }
   }
+
+  // ------- Quick Actions (Bottom-Bar) -------
+  const quickPhotoChooseStopp = (id) => {
+    setStoppForQuickPhoto(id);
+    setShowPhotoPicker(false);
+    // kleinen Tick warten, damit das Input gemountet ist
+    setTimeout(() => {
+      quickFileRef.current?.click();
+    }, 0);
+  };
+
+  const handleQuickFileChange = (e) => {
+    if (!stoppForQuickPhoto) return;
+    uploadFoto(stoppForQuickPhoto, e.target);
+    setStoppForQuickPhoto(null);
+  };
 
   // Google-Maps Button URL (Firma -> ... -> letzter Kunde)
   const gmapsUrl = buildGoogleMapsRouteURL(GMAPS_ORIGIN, stopps);
@@ -389,7 +409,7 @@ export default function Tagestour() {
                     ) : null}
                   </div>
 
-                  {/* Quick Aktionen */}
+                  {/* Quick Aktionen pro Stopp */}
                   <div className="shrink-0 flex gap-2">
                     {s.telefon ? (
                       <a
@@ -422,7 +442,9 @@ export default function Tagestour() {
 
                 {/* Fotos */}
                 <div className="pt-1">
-                  <div className="text-sm font-medium mb-2">Fotos <span className="text-gray-400 font-normal">({(fotos || []).length}/3)</span></div>
+                  <div className="text-sm font-medium mb-2">
+                    Fotos <span className="text-gray-400 font-normal">({(fotos || []).length}/3)</span>
+                  </div>
                   <div className="flex flex-wrap items-center gap-2">
                     {/* Thumbnails */}
                     {fotos.map((f) => (
@@ -453,7 +475,7 @@ export default function Tagestour() {
                       </div>
                     ))}
 
-                    {/* 📷 Upload */}
+                    {/* 📷 Upload im Card-Kontext */}
                     <label
                       htmlFor={inputId}
                       className={`cursor-pointer inline-flex items-center justify-center border rounded-md px-3 py-2 select-none ${
@@ -500,10 +522,13 @@ export default function Tagestour() {
               </div>
             );
           })}
+
+          {/* Platzhalter, damit Bottom-Bar nichts überdeckt */}
+          <div className="h-[68px]" />
         </section>
       )}
 
-      {/* ======= DESKTOP: Tabelle (ab md) – UNVERÄNDERT bis auf Fotos-Spalte sichtbar bleiben ======= */}
+      {/* ======= DESKTOP: Tabelle (ab md) ======= */}
       {tour && (
         <>
           <section className="bg-white p-4 rounded-lg shadow space-y-4 hidden md:block">
@@ -731,6 +756,139 @@ export default function Tagestour() {
               </div>
             )}
           </section>
+        </>
+      )}
+
+      {/* ======= Bottom Action-Bar (nur Mobil) ======= */}
+      {tour && (
+        <>
+          {/* Spacer ist oben bei Cards bereits eingefügt */}
+          <div className="fixed md:hidden inset-x-0 bottom-0 z-40">
+            <div className="mx-3 mb-3 rounded-xl shadow-lg border bg-white">
+              <div className="grid grid-cols-3 divide-x">
+                <a
+                  href={gmapsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex flex-col items-center justify-center py-3 active:bg-gray-50"
+                  title="Route in Google Maps"
+                >
+                  <div className="text-xl">🗺️</div>
+                  <div className="text-[11px] font-medium text-gray-700">Route</div>
+                </a>
+                <button
+                  className="flex flex-col items-center justify-center py-3 active:bg-gray-50 w-full"
+                  onClick={() => setShowPhotoPicker(true)}
+                  title="Schnell-Foto hochladen"
+                >
+                  <div className="text-xl">📷</div>
+                  <div className="text-[11px] font-medium text-gray-700">Foto</div>
+                </button>
+                <button
+                  className="flex flex-col items-center justify-center py-3 active:bg-gray-50 w-full"
+                  onClick={() => setShowCallPicker(true)}
+                  title="Stopps anrufen"
+                >
+                  <div className="text-xl">📞</div>
+                  <div className="text-[11px] font-medium text-gray-700">Anrufen</div>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* verstecktes File-Input für Schnell-Foto */}
+          <input
+            ref={quickFileRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={handleQuickFileChange}
+          />
+
+          {/* Photo-Picker Modal */}
+          {showPhotoPicker && (
+            <div className="fixed inset-0 z-50 md:hidden">
+              <div
+                className="absolute inset-0 bg-black/40"
+                onClick={() => setShowPhotoPicker(false)}
+                aria-hidden="true"
+              />
+              <div className="absolute inset-x-0 bottom-0 bg-white rounded-t-2xl shadow-lg p-4 max-h-[70vh] overflow-auto">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-base font-semibold text-[#0058A3]">Schnell-Foto: Stopp wählen</h3>
+                  <button
+                    className="px-3 py-1 rounded bg-gray-100 hover:bg-gray-200"
+                    onClick={() => setShowPhotoPicker(false)}
+                  >
+                    Schließen
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {stopps.map((s) => {
+                    const count = (fotosMap[s.id] || []).length;
+                    const disabled = count >= 3 || fotoBusy[s.id];
+                    return (
+                      <button
+                        key={s.id}
+                        className={`w-full text-left border rounded-lg px-3 py-2 ${
+                          disabled ? "opacity-50 cursor-not-allowed" : "hover:bg-gray-50"
+                        }`}
+                        disabled={disabled}
+                        onClick={() => quickPhotoChooseStopp(s.id)}
+                        title={disabled ? "Maximal 3 Fotos" : "Diesem Stopp ein Foto hinzufügen"}
+                      >
+                        <div className="text-sm font-medium">{s.kunde}</div>
+                        <div className="text-xs text-gray-600 truncate">{s.adresse}</div>
+                        <div className="text-[11px] text-gray-500 mt-1">{count}/3 Fotos</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Call-Picker Modal */}
+          {showCallPicker && (
+            <div className="fixed inset-0 z-50 md:hidden">
+              <div
+                className="absolute inset-0 bg-black/40"
+                onClick={() => setShowCallPicker(false)}
+                aria-hidden="true"
+              />
+              <div className="absolute inset-x-0 bottom-0 bg-white rounded-t-2xl shadow-lg p-4 max-h-[70vh] overflow-auto">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-base font-semibold text-[#0058A3]">Anrufen: Stopp wählen</h3>
+                  <button
+                    className="px-3 py-1 rounded bg-gray-100 hover:bg-gray-200"
+                    onClick={() => setShowCallPicker(false)}
+                  >
+                    Schließen
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {stopps.filter((s) => !!s.telefon).length === 0 && (
+                    <div className="text-sm text-gray-600">Keine Telefonnummern vorhanden.</div>
+                  )}
+                  {stopps
+                    .filter((s) => !!s.telefon)
+                    .map((s) => (
+                      <a
+                        key={s.id}
+                        href={telHref(s.telefon)}
+                        className="block border rounded-lg px-3 py-2 hover:bg-gray-50"
+                        onClick={() => setShowCallPicker(false)}
+                      >
+                        <div className="text-sm font-medium">{s.kunde}</div>
+                        <div className="text-xs text-gray-600">{s.telefon}</div>
+                        <div className="text-[11px] text-gray-500 truncate">{s.adresse}</div>
+                      </a>
+                    ))}
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
