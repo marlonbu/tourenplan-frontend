@@ -36,3 +36,8 @@ h1, h2, h3 { @apply text-gehlenborg-blue font-bold; }
 .shadow-soft { box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
 
 /* Responsive: Sidebar-Ausweichfläche ist via Layout gelöst */
+
+/* Safe area padding für iOS Bottom Bar */
+.mobile-bottom-bar {
+  padding-bottom: env(safe-area-inset-bottom);
+}
