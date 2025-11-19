@@ -488,6 +488,13 @@ export default function Tourverwaltung() {
                                   {stoppsMap[t.id].map((s) => {
                                     const isEditing = !!stoppEditing[s.id];
                                     const draft = stoppDraft[s.id] || {};
+
+                                    // 🔧 WICHTIG: Position im Edit-Modus immer mit aktuellem Wert vorbelegen
+                                    const posValue =
+                                      draft.position === undefined
+                                        ? (s.position ?? "")
+                                        : draft.position;
+
                                     return (
                                       <tr key={s.id} className="hover:bg-white">
                                         {/* Pos */}
@@ -498,12 +505,14 @@ export default function Tourverwaltung() {
                                             <input
                                               type="number"
                                               className="border rounded px-2 py-1 w-full"
-                                              value={draft.position ?? ""}
+                                              value={posValue}
                                               onChange={(e) =>
                                                 changeStoppDraft(
                                                   s.id,
                                                   "position",
-                                                  e.target.value === "" ? "" : Number(e.target.value)
+                                                  e.target.value === ""
+                                                    ? ""
+                                                    : Number(e.target.value)
                                                 )
                                               }
                                             />
@@ -536,7 +545,9 @@ export default function Tourverwaltung() {
                                               type="text"
                                               className="border rounded px-2 py-1 w-full"
                                               value={draft.kunde ?? ""}
-                                              onChange={(e) => changeStoppDraft(s.id, "kunde", e.target.value)}
+                                              onChange={(e) =>
+                                                changeStoppDraft(s.id, "kunde", e.target.value)
+                                              }
                                             />
                                           )}
                                         </td>
@@ -550,7 +561,9 @@ export default function Tourverwaltung() {
                                               type="text"
                                               className="border rounded px-2 py-1 w-full"
                                               value={draft.adresse ?? ""}
-                                              onChange={(e) => changeStoppDraft(s.id, "adresse", e.target.value)}
+                                              onChange={(e) =>
+                                                changeStoppDraft(s.id, "adresse", e.target.value)
+                                              }
                                             />
                                           )}
                                         </td>
@@ -564,7 +577,9 @@ export default function Tourverwaltung() {
                                               type="text"
                                               className="border rounded px-2 py-1 w-full"
                                               value={draft.telefon ?? ""}
-                                              onChange={(e) => changeStoppDraft(s.id, "telefon", e.target.value)}
+                                              onChange={(e) =>
+                                                changeStoppDraft(s.id, "telefon", e.target.value)
+                                              }
                                             />
                                           )}
                                         </td>
@@ -578,7 +593,13 @@ export default function Tourverwaltung() {
                                               type="text"
                                               className="border rounded px-2 py-1 w-full"
                                               value={draft.kommission ?? ""}
-                                              onChange={(e) => changeStoppDraft(s.id, "kommission", e.target.value)}
+                                              onChange={(e) =>
+                                                changeStoppDraft(
+                                                  s.id,
+                                                  "kommission",
+                                                  e.target.value
+                                                )
+                                              }
                                             />
                                           )}
                                         </td>
@@ -592,7 +613,9 @@ export default function Tourverwaltung() {
                                               type="text"
                                               className="border rounded px-2 py-1 w-full"
                                               value={draft.hinweis ?? ""}
-                                              onChange={(e) => changeStoppDraft(s.id, "hinweis", e.target.value)}
+                                              onChange={(e) =>
+                                                changeStoppDraft(s.id, "hinweis", e.target.value)
+                                              }
                                             />
                                           )}
                                         </td>
