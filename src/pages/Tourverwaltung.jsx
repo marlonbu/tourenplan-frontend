@@ -215,7 +215,7 @@ export default function Tourverwaltung() {
       // Typkonvertierung für position
       if (payload.position === "") payload.position = null;
       if (payload.position != null) payload.position = Number(payload.position);
-      // ankunft bleibt String (frei formatiert, z. B. "10:00", "ca. 11–12 Uhr")
+      // ankunft bleibt String
 
       await api.updateStopp(stoppId, payload);
 
@@ -491,14 +491,25 @@ export default function Tourverwaltung() {
                                     return (
                                       <tr key={s.id} className="hover:bg-white">
                                         {/* Pos */}
-                                        <td className="border px-2 py-1 w-16">
+                                        <td className="border px-2 py-1 w-20 text-center">
                                           {!isEditing ? (
                                             s.position ?? ""
                                           ) : (
                                             <input
                                               type="number"
-                                              className="border rounded px-2 py-1 w-full"
-                                              value={draft.position ?? ""}
+                                              inputMode="numeric"
+                                              pattern="[0-9]*"
+                                              min="1"
+                                              step="1"
+                                              className="border rounded px-2 py-1 w-20 text-center
+                                              [&::-webkit-outer-spin-button]:appearance-none
+                                              [&::-webkit-inner-spin-button]:appearance-none"
+                                              style={{ MozAppearance: "textfield" }}
+                                              value={
+                                                draft.position === null || draft.position === undefined
+                                                  ? ""
+                                                  : draft.position
+                                              }
                                               onChange={(e) =>
                                                 changeStoppDraft(
                                                   s.id,
