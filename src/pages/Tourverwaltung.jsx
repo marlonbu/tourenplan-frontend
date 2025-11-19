@@ -36,6 +36,18 @@ export default function Tourverwaltung() {
   // Stopp-Formdaten im Edit: stopp_id -> {felder}
   const [stoppDraft, setStoppDraft] = useState({}); // { [stoppId]: { ... } }
 
+  // ---- Neu: Verschieben-Modal ----
+  const [moveModal, setMoveModal] = useState({
+    open: false,
+    srcTourId: null,
+    stoppId: null,
+    // Ziel
+    targetFahrerId: "",
+    targetDatum: "",
+    busy: false,
+    error: "",
+  });
+
   useEffect(() => {
     ladeFahrer();
     ladeTouren(); // initial
@@ -215,7 +227,7 @@ export default function Tourverwaltung() {
       // Typkonvertierung für position
       if (payload.position === "") payload.position = null;
       if (payload.position != null) payload.position = Number(payload.position);
-      // ankunft bleibt String
+      // ankunft bleibt String (frei formatiert, z. B. "10:00", "ca. 11–12 Uhr")
 
       await api.updateStopp(stoppId, payload);
 
@@ -258,6 +270,98 @@ export default function Tourverwaltung() {
     } catch (e) {
       console.error(e);
       alert("Stopp konnte nicht gelöscht werden.");
+    }
+  }
+
+  // --------- Neu: Verschieben-Flow ----------
+  function openMoveModal(stopp, srcTourId, defaultFahrerId, defaultDatum) {
+    setMoveModal({
+      open: true,
+      srcTourId,
+      stoppId: stopp.id,
+      targetFahrerId: defaultFahrerId ?? "",
+      targetDatum: defaultDatum ?? "",
+      busy: false,
+      error: "",
+    });
+  }
+
+  function closeMoveModal() {
+    setMoveModal((s) => ({ ...s, open: false }));
+  }
+
+  async function ensureTour(fahrerId, datum) {
+    // Wenn es die Tour gibt -> nutzen, sonst anlegen
+    const res = await api.getTour(fahrerId, datum);
+    if (res?.tour?.id) return res.tour.id;
+    const t = await api.createTour(fahrerId, datum);
+    return t.id;
+  }
+
+  function findStoppInState(tourId, stoppId) {
+    const list = stoppsMap[tourId] || [];
+    return list.find((x) => x.id === stoppId);
+  }
+
+  async function performMove() {
+    const { srcTourId, stoppId, targetFahrerId, targetDatum } = moveModal;
+    if (!srcTourId || !stoppId || !targetFahrerId || !targetDatum) {
+      setMoveModal((s) => ({ ...s, error: "Bitte Fahrer und Datum wählen." }));
+      return;
+    }
+
+    try {
+      setMoveModal((s) => ({ ...s, busy: true, error: "" }));
+
+      // 1) Ziel-Tour sicherstellen
+      const targetTourId = await ensureTour(Number(targetFahrerId), targetDatum);
+
+      // 2) Ausgangs-Stopp-Objekt besorgen (aktueller Stand)
+      const srcStopp = findStoppInState(srcTourId, stoppId);
+      if (!srcStopp) throw new Error("Quell-Stopp nicht gefunden.");
+
+      // 3) Payload zum Klonen zusammenbauen
+      const payload = {
+        // alle Felder, die createStopp akzeptiert (wie in Planung.jsx genutzt)
+        kunde: srcStopp.kunde || "",
+        adresse: srcStopp.adresse || "",
+        telefon: srcStopp.telefon || "",
+        kommission: srcStopp.kommission || "",
+        hinweis: srcStopp.hinweis || "",
+        position: Number.isFinite(srcStopp.position) ? srcStopp.position : null,
+        ankunft: srcStopp.ankunft || "",
+      };
+
+      // 4) Neuen Stopp in Ziel-Tour anlegen
+      const newStopp = await api.createStopp(targetTourId, payload);
+
+      // 5) Alten Stopp löschen
+      await api.deleteStopp(stoppId);
+
+      // 6) UI aktualisieren
+      setStoppsMap((m) => {
+        const copy = { ...m };
+        // Aus Quelltour entfernen
+        copy[srcTourId] = (copy[srcTourId] || []).filter((s) => s.id !== stoppId);
+        // Wenn Zieltour geöffnet ist, dort hinzufügen
+        if (copy[targetTourId]) {
+          copy[targetTourId] = [...copy[targetTourId], newStopp];
+        }
+        return copy;
+      });
+
+      closeMoveModal();
+      alert("Stopp wurde verschoben. Hinweis: vorhandene Fotos bleiben beim alten Stopp.");
+    } catch (e) {
+      console.error(e);
+      setMoveModal((s) => ({
+        ...s,
+        error: e?.message || "Verschieben fehlgeschlagen.",
+        busy: false,
+      }));
+      return;
+    } finally {
+      setMoveModal((s) => ({ ...s, busy: false }));
     }
   }
 
@@ -491,24 +595,17 @@ export default function Tourverwaltung() {
                                     return (
                                       <tr key={s.id} className="hover:bg-white">
                                         {/* Pos */}
-                                        <td className="border px-2 py-1 w-20 text-center">
+                                        <td className="border px-2 py-1 w-16">
                                           {!isEditing ? (
                                             s.position ?? ""
                                           ) : (
                                             <input
                                               type="number"
-                                              inputMode="numeric"
-                                              pattern="[0-9]*"
-                                              min="1"
-                                              step="1"
-                                              className="border rounded px-2 py-1 w-20 text-center
-                                              [&::-webkit-outer-spin-button]:appearance-none
-                                              [&::-webkit-inner-spin-button]:appearance-none"
-                                              style={{ MozAppearance: "textfield" }}
+                                              className="border rounded px-2 py-1 w-full text-center"
                                               value={
-                                                draft.position === null || draft.position === undefined
-                                                  ? ""
-                                                  : draft.position
+                                                draft.position === 0
+                                                  ? 0
+                                                  : draft.position ?? ""
                                               }
                                               onChange={(e) =>
                                                 changeStoppDraft(
@@ -611,12 +708,25 @@ export default function Tourverwaltung() {
                                         {/* Aktionen */}
                                         <td className="border px-2 py-1">
                                           {!isEditing ? (
-                                            <div className="flex gap-2">
+                                            <div className="flex flex-wrap gap-2">
                                               <button
                                                 className="px-3 py-1 rounded bg-yellow-200 hover:bg-yellow-300"
                                                 onClick={() => enterStoppEdit(s)}
                                               >
                                                 ✏️ Bearbeiten
+                                              </button>
+                                              <button
+                                                className="px-3 py-1 rounded bg-indigo-500 text-white hover:bg-indigo-600"
+                                                onClick={() =>
+                                                  openMoveModal(
+                                                    s,
+                                                    t.id,
+                                                    t.fahrer_id,
+                                                    t.datum
+                                                  )
+                                                }
+                                              >
+                                                🔁 Verschieben
                                               </button>
                                               <button
                                                 className="px-3 py-1 rounded bg-red-500 text-white hover:bg-red-600"
@@ -626,7 +736,7 @@ export default function Tourverwaltung() {
                                               </button>
                                             </div>
                                           ) : (
-                                            <div className="flex gap-2">
+                                            <div className="flex flex-wrap gap-2">
                                               <button
                                                 className="px-3 py-1 rounded bg-[#0058A3] text-white hover:bg-blue-800"
                                                 onClick={() => saveStopp(s.id, t.id)}
@@ -659,6 +769,86 @@ export default function Tourverwaltung() {
           </div>
         )}
       </section>
+
+      {/* ---- Neu: Verschieben Modal ---- */}
+      {moveModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black opacity-40"
+            onClick={closeMoveModal}
+            aria-hidden="true"
+          />
+          {/* Dialog */}
+          <div className="relative bg-white rounded-lg shadow-lg w-full max-w-lg p-5 z-10">
+            <h3 className="text-lg font-semibold text-[#0058A3] mb-3">
+              Stopp verschieben
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm text-gray-600 block">Ziel-Fahrer</label>
+                <select
+                  className="border rounded-md px-3 py-2 w-full"
+                  value={moveModal.targetFahrerId}
+                  onChange={(e) =>
+                    setMoveModal((s) => ({ ...s, targetFahrerId: e.target.value }))
+                  }
+                  disabled={moveModal.busy}
+                >
+                  <option value="">— bitte wählen —</option>
+                  {fahrer.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-sm text-gray-600 block">Ziel-Datum</label>
+                <input
+                  type="date"
+                  className="border rounded-md px-3 py-2 w-full"
+                  value={moveModal.targetDatum}
+                  onChange={(e) =>
+                    setMoveModal((s) => ({ ...s, targetDatum: e.target.value }))
+                  }
+                  disabled={moveModal.busy}
+                />
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-500 mt-3">
+              Hinweis: Fotos können nicht automatisch mitverschoben werden (bleiben beim
+              alten Stopp). Die Stoppdaten (Kunde, Adresse, Ankunft, Position, …) werden
+              vollständig übernommen.
+            </p>
+
+            {moveModal.error && (
+              <div className="mt-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+                {moveModal.error}
+              </div>
+            )}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                className="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300 disabled:opacity-60"
+                onClick={closeMoveModal}
+                disabled={moveModal.busy}
+              >
+                Abbrechen
+              </button>
+              <button
+                className="px-4 py-2 rounded bg-[#0058A3] text-white hover:bg-blue-800 disabled:opacity-60"
+                onClick={performMove}
+                disabled={moveModal.busy}
+              >
+                {moveModal.busy ? "Verschiebe…" : "Verschieben"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
