@@ -1,3 +1,4 @@
+// src/pages/Tourverwaltung.jsx
 import React, { useEffect, useState } from "react";
 import { api } from "../api";
 
@@ -8,6 +9,13 @@ function fmt(d) {
   } catch {
     return d;
   }
+}
+
+// Telefon-Helper (nur für Mobil-Links)
+function telHref(raw) {
+  if (!raw) return "";
+  const cleaned = String(raw).replace(/[()\s\-\/\s]/g, "");
+  return `tel:${cleaned}`;
 }
 
 export default function Tourverwaltung() {
@@ -322,7 +330,6 @@ export default function Tourverwaltung() {
 
       // 3) Payload zum Klonen zusammenbauen
       const payload = {
-        // alle Felder, die createStopp akzeptiert (wie in Planung.jsx genutzt)
         kunde: srcStopp.kunde || "",
         adresse: srcStopp.adresse || "",
         telefon: srcStopp.telefon || "",
@@ -440,8 +447,307 @@ export default function Tourverwaltung() {
         </div>
       </section>
 
-      {/* Tabelle Touren */}
-      <section className="bg-white p-4 rounded-lg shadow space-y-3">
+      {/* ================= MOBILE: Kartenansicht ================= */}
+      <section className="md:hidden space-y-3">
+        {loading && <div className="text-gray-500">Laden…</div>}
+        {!loading && msg && <div className="text-gray-600">{msg}</div>}
+
+        {!loading && touren.map((t) => {
+          const stopps = stoppsMap[t.id] || null;
+          const isEdit = !!editTour[t.id];
+
+          return (
+            <div key={t.id} className="bg-white border rounded-lg shadow-sm p-4">
+              {/* Kopf Tour */}
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs text-gray-500">{fmt(t.datum)}</div>
+                  <div className="text-base font-semibold text-[#0058A3]">
+                    {t.fahrer_name}
+                  </div>
+                  <div className="text-sm text-gray-700 mt-1">
+                    <b>{t.stopps_count ?? 0}</b> Stopps
+                    {t.kunden_preview ? (
+                      <span className="text-gray-500"> · {t.kunden_preview}</span>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+
+              {/* Optional: Tour-Bearbeitung (gleich wie Desktop, nur Inputs inline) */}
+              {isEdit && (
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <input
+                    type="date"
+                    className="border rounded px-2 py-2"
+                    value={editTour[t.id].datum || ""}
+                    onChange={(e) =>
+                      setEditTour((st) => ({
+                        ...st,
+                        [t.id]: { ...st[t.id], datum: e.target.value },
+                      }))
+                    }
+                  />
+                  <select
+                    className="border rounded px-2 py-2"
+                    value={editTour[t.id].fahrer_id || ""}
+                    onChange={(e) =>
+                      setEditTour((st) => ({
+                        ...st,
+                        [t.id]: { ...st[t.id], fahrer_id: Number(e.target.value) },
+                      }))
+                    }
+                  >
+                    {fahrer.map((f) => (
+                      <option key={f.id} value={f.id}>{f.name}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    className="border rounded px-2 py-2"
+                    placeholder="Bemerkung"
+                    value={editTour[t.id].bemerkung || ""}
+                    onChange={(e) =>
+                      setEditTour((st) => ({
+                        ...st,
+                        [t.id]: { ...st[t.id], bemerkung: e.target.value },
+                      }))
+                    }
+                  />
+                </div>
+              )}
+
+              {/* Tour-Aktionen */}
+              <div className="mt-3 flex flex-wrap gap-2">
+                {!isEdit ? (
+                  <>
+                    <button
+                      className="px-3 py-2 rounded bg-gray-100 hover:bg-gray-200 w-full sm:w-auto"
+                      onClick={() => toggleStopps(t.id)}
+                    >
+                      {stopps ? "Stopps ausblenden" : "Stopps anzeigen"}
+                    </button>
+                    <button
+                      className="px-3 py-2 rounded bg-yellow-200 hover:bg-yellow-300 w-full sm:w-auto"
+                      onClick={() => startEditTour(t)}
+                    >
+                      ✏️ Bearbeiten
+                    </button>
+                    <button
+                      className="px-3 py-2 rounded bg-red-500 text-white hover:bg-red-600 w-full sm:w-auto"
+                      onClick={() => deleteTour(t.id, t.stopps_count)}
+                    >
+                      🗑️ Tour löschen
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      className="px-3 py-2 rounded bg-[#0058A3] text-white hover:bg-blue-800 w-full sm:w-auto"
+                      onClick={() => saveEditTour(t.id)}
+                    >
+                      💾 Speichern
+                    </button>
+                    <button
+                      className="px-3 py-2 rounded bg-gray-200 hover:bg-gray-300 w-full sm:w-auto"
+                      onClick={() => cancelEditTour(t.id)}
+                    >
+                      Abbrechen
+                    </button>
+                  </>
+                )}
+              </div>
+
+              {/* Stopps (als Cards) */}
+              {stopps && (
+                <div className="mt-4 space-y-3">
+                  {stopps.length === 0 && (
+                    <div className="text-sm text-gray-500 italic">
+                      Keine Stopps vorhanden
+                    </div>
+                  )}
+                  {stopps.map((s) => {
+                    const isEditing = !!stoppEditing[s.id];
+                    const draft = stoppDraft[s.id] || {};
+                    return (
+                      <div key={s.id} className="border rounded-lg p-3">
+                        {/* Kopf Stopp */}
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-xs text-gray-500">
+                              Pos. {Number.isFinite(s.position) ? s.position : "–"}
+                            </div>
+                            <div className="text-sm font-semibold text-[#0058A3] break-words">
+                              {s.kunde || "—"}
+                            </div>
+                          </div>
+                          {s.ankunft && !isEditing ? (
+                            <span className="text-xs bg-[#E8F1FA] text-[#0058A3] px-2 py-1 rounded">
+                              {s.ankunft}
+                            </span>
+                          ) : null}
+                        </div>
+
+                        {/* Inhalte */}
+                        {!isEditing ? (
+                          <div className="mt-2 space-y-1 text-sm">
+                            <div className="flex gap-2">
+                              <span>📍</span>
+                              {s.adresse ? (
+                                <a
+                                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                                    s.adresse
+                                  )}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-600 hover:underline break-words"
+                                >
+                                  {s.adresse}
+                                </a>
+                              ) : (
+                                <span className="text-gray-500">—</span>
+                              )}
+                            </div>
+                            <div className="flex gap-2">
+                              <span>📞</span>
+                              {s.telefon ? (
+                                <a className="text-blue-600 hover:underline" href={telHref(s.telefon)}>
+                                  {s.telefon}
+                                </a>
+                              ) : (
+                                <span className="text-gray-500">—</span>
+                              )}
+                            </div>
+                            {(s.kommission || s.hinweis) && (
+                              <div className="flex gap-2">
+                                <span>📝</span>
+                                <span className="break-words">
+                                  {s.kommission || s.hinweis}
+                                </span>
+                              </div>
+                            )}
+                            {s.ankunft && (
+                              <div className="flex gap-2">
+                                <span>⏱️</span>
+                                <span>{s.ankunft}</span>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          // Edit-Form in Card
+                          <div className="mt-3 grid grid-cols-1 gap-2 text-sm">
+                            <input
+                              type="number"
+                              className="border rounded px-2 py-2"
+                              placeholder="Position"
+                              value={draft.position === 0 ? 0 : draft.position ?? ""}
+                              onChange={(e) =>
+                                changeStoppDraft(
+                                  s.id,
+                                  "position",
+                                  e.target.value === "" ? "" : Number(e.target.value)
+                                )
+                              }
+                            />
+                            <input
+                              type="text"
+                              className="border rounded px-2 py-2"
+                              placeholder="Ankunft"
+                              value={draft.ankunft ?? ""}
+                              onChange={(e) => changeStoppDraft(s.id, "ankunft", e.target.value)}
+                            />
+                            <input
+                              type="text"
+                              className="border rounded px-2 py-2"
+                              placeholder="Kunde"
+                              value={draft.kunde ?? ""}
+                              onChange={(e) => changeStoppDraft(s.id, "kunde", e.target.value)}
+                            />
+                            <input
+                              type="text"
+                              className="border rounded px-2 py-2"
+                              placeholder="Adresse"
+                              value={draft.adresse ?? ""}
+                              onChange={(e) => changeStoppDraft(s.id, "adresse", e.target.value)}
+                            />
+                            <input
+                              type="text"
+                              className="border rounded px-2 py-2"
+                              placeholder="Telefon"
+                              value={draft.telefon ?? ""}
+                              onChange={(e) => changeStoppDraft(s.id, "telefon", e.target.value)}
+                            />
+                            <input
+                              type="text"
+                              className="border rounded px-2 py-2"
+                              placeholder="Kommission"
+                              value={draft.kommission ?? ""}
+                              onChange={(e) => changeStoppDraft(s.id, "kommission", e.target.value)}
+                            />
+                            <input
+                              type="text"
+                              className="border rounded px-2 py-2"
+                              placeholder="Hinweis"
+                              value={draft.hinweis ?? ""}
+                              onChange={(e) => changeStoppDraft(s.id, "hinweis", e.target.value)}
+                            />
+                          </div>
+                        )}
+
+                        {/* Aktionen Stopp */}
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {!isEditing ? (
+                            <>
+                              <button
+                                className="px-3 py-2 rounded bg-yellow-200 hover:bg-yellow-300 w-full sm:w-auto"
+                                onClick={() => enterStoppEdit(s)}
+                              >
+                                ✏️ Bearbeiten
+                              </button>
+                              <button
+                                className="px-3 py-2 rounded bg-indigo-500 text-white hover:bg-indigo-600 w-full sm:w-auto"
+                                onClick={() =>
+                                  openMoveModal(s, t.id, t.fahrer_id, t.datum)
+                                }
+                              >
+                                🔁 Verschieben
+                              </button>
+                              <button
+                                className="px-3 py-2 rounded bg-red-500 text-white hover:bg-red-600 w-full sm:w-auto"
+                                onClick={() => deleteStopp(s.id, t.id)}
+                              >
+                                🗑️ Löschen
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                className="px-3 py-2 rounded bg-[#0058A3] text-white hover:bg-blue-800 w-full sm:w-auto"
+                                onClick={() => saveStopp(s.id, t.id)}
+                              >
+                                💾 Speichern
+                              </button>
+                              <button
+                                className="px-3 py-2 rounded bg-gray-200 hover:bg-gray-300 w-full sm:w-auto"
+                                onClick={() => cancelStoppEdit(s.id)}
+                              >
+                                Abbrechen
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </section>
+
+      {/* ================= DESKTOP: Tabelle bleibt unverändert ================= */}
+      <section className="hidden md:block bg-white p-4 rounded-lg shadow space-y-3">
         <h2 className="text-lg font-medium text-[#0058A3]">Touren</h2>
 
         {loading && <div className="text-gray-500">Laden…</div>}
@@ -770,7 +1076,7 @@ export default function Tourverwaltung() {
         )}
       </section>
 
-      {/* ---- Neu: Verschieben Modal ---- */}
+      {/* ---- Neu: Verschieben Modal (unverändert) ---- */}
       {moveModal.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           {/* Backdrop */}
