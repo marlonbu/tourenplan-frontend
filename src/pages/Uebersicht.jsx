@@ -1,14 +1,9 @@
 // src/pages/Uebersicht.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { api } from "../api";
 
-function telHref(raw) {
-  if (!raw) return "";
-  const cleaned = String(raw).replace(/[()\s\-\/]/g, "");
-  return `tel:${cleaned}`;
-}
-
-function fmtDate(d) {
+// Datum hübsch formatiert
+function fmt(d) {
   try {
     return new Date(d).toLocaleDateString("de-DE");
   } catch {
@@ -16,57 +11,116 @@ function fmtDate(d) {
   }
 }
 
+// sichere Sortierung (Datum ↑, Position ↑, leere Positionen zuletzt)
+function sortRowsAsc(a, b) {
+  const dA = a.datum ?? "";
+  const dB = b.datum ?? "";
+  if (dA < dB) return -1;
+  if (dA > dB) return 1;
+
+  const posA = a.position;
+  const posB = b.position;
+
+  const aHas = Number.isFinite(posA);
+  const bHas = Number.isFinite(posB);
+  if (aHas && bHas) return posA - posB;
+  if (aHas && !bHas) return -1; // echte Zahlen vor null/undefined
+  if (!aHas && bHas) return 1;
+  return 0;
+}
+
 export default function Uebersicht() {
   // Filter
   const [fahrer, setFahrer] = useState([]);
-  const [filterFahrer, setFilterFahrer] = useState(""); // "" = alle
-  const [filterVon, setFilterVon] = useState("");
-  const [filterBis, setFilterBis] = useState("");
-  const [filterKw, setFilterKw] = useState("");
+  const [filterFahrer, setFilterFahrer] = useState("");  // "" = Alle Fahrer
+  const [filterVon, setFilterVon] = useState("");        // YYYY-MM-DD
+  const [filterBis, setFilterBis] = useState("");        // YYYY-MM-DD
+  const [filterKw, setFilterKw] = useState("");          // YYYY-Www (optional)
   const [filterKunde, setFilterKunde] = useState("");
 
   // Daten
-  const [touren, setTouren] = useState([]);
+  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
-  // Mobile: Stopps-Accordion je Tour
-  const [openStops, setOpenStops] = useState({}); // { [tourId]: true }
-
-  // Tab-Ansicht: alle | zukünftig | vergangen
-  const [tab, setTab] = useState("alle");
+  // Optional: clientseitige Status-Tabs (Alle / Bevorstehend / Vergangen)
+  const [statusTab, setStatusTab] = useState("alle"); // "alle" | "future" | "past"
 
   useEffect(() => {
     ladeFahrer();
-    ladeTouren();
+    applyFilter(); // initialer Load
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function ladeFahrer() {
     try {
       const data = await api.listFahrer();
       setFahrer(data);
-    } catch (e) {
-      console.error("Fahrer laden fehlgeschlagen:", e);
+    } catch (err) {
+      console.error("Fahrer laden fehlgeschlagen:", err);
     }
   }
 
-  async function ladeTouren() {
+  async function applyFilter() {
     try {
       setLoading(true);
       setMsg("");
+
+      // Für /touren-admin:
+      // Wenn Von/Bis gesetzt ist, verwenden wir diese (KW wird vom Backend dann ignoriert).
+      // Wenn Von/Bis leer sind und KW gesetzt ist, verwenden wir KW.
+      const useDates = !!(filterVon || filterBis);
       const payload = {
         fahrer_id: filterFahrer || undefined,
-        date_from: filterVon || undefined,
-        date_to: filterBis || undefined,
-        kw: filterKw || undefined,
+        date_from: useDates ? filterVon || undefined : undefined,
+        date_to: useDates ? filterBis || undefined : undefined,
+        kw: !useDates ? (filterKw || undefined) : undefined,
         kunde: filterKunde || undefined,
       };
-      const data = await api.getTourenAdmin(payload);
-      setTouren(data || []);
-      if (!data || data.length === 0) setMsg("Keine Touren gefunden.");
+
+      // 1) Touren holen
+      const touren = await api.getTourenAdmin(payload);
+
+      if (!Array.isArray(touren) || touren.length === 0) {
+        setRows([]);
+        setMsg("Keine Stopps gefunden.");
+        return;
+      }
+
+      // 2) Für jede Tour Stopps laden und auf Zeilen mappen (jede Zeile = ein Stopp)
+      const alleStoppsListen = await Promise.all(
+        touren.map(async (t) => {
+          try {
+            const stopps = await api.getStoppsByTour(t.id);
+            return (stopps || []).map((s) => ({
+              stopp_id: s.id,
+              datum: t.datum,                    // aus Tour
+              fahrer_name: t.fahrer_name,        // aus Tour
+              position: s.position ?? null,
+              kunde: s.kunde || "",
+              adresse: s.adresse || "",
+              telefon: s.telefon || "",
+              kommission: s.kommission || "",
+              hinweis: s.hinweis || "",
+              anmerkung_fahrer: s.anmerkung_fahrer || "",
+              tour_bemerkung: t.bemerkung || "",
+            }));
+          } catch (e) {
+            console.error(`Stopps für Tour ${t.id} laden fehlgeschlagen:`, e);
+            // Wenn eine Tour fehlschlägt, zeigen wir die anderen Touren trotzdem an.
+            return [];
+          }
+        })
+      );
+
+      // 3) Flatten + Sort
+      const flatRows = alleStoppsListen.flat().sort(sortRowsAsc);
+
+      setRows(flatRows);
+      if (flatRows.length === 0) setMsg("Keine Stopps gefunden.");
     } catch (err) {
-      console.error(err);
-      setMsg("❌ Fehler beim Laden der Touren");
+      console.error("Stopps-Übersicht laden fehlgeschlagen:", err);
+      setMsg("❌ Fehler beim Laden der Stopps-Übersicht");
     } finally {
       setLoading(false);
     }
@@ -78,54 +132,36 @@ export default function Uebersicht() {
     setFilterBis("");
     setFilterKw("");
     setFilterKunde("");
-    setTouren([]);
-    setOpenStops({});
+    setRows([]);
     setMsg("");
+    setStatusTab("alle");
   }
 
-  // Clientseitige Tab-Filterung
-  const todayISO = new Date().toISOString().slice(0, 10);
-  const gefiltert = useMemo(() => {
-    if (!touren?.length) return [];
-    if (tab === "alle") return touren;
-    if (tab === "zukuenftig") {
-      return touren.filter((t) => String(t.datum) > todayISO);
-    }
-    if (tab === "vergangen") {
-      return touren.filter((t) => String(t.datum) < todayISO);
-    }
-    return touren;
-  }, [touren, tab, todayISO]);
+  // Clientseitige Status-Filterung für die Ansicht (ohne API-Änderung)
+  const filteredRowsForView = (() => {
+    if (statusTab === "alle") return rows;
+    const today = new Date().toISOString().slice(0, 10);
+    if (statusTab === "future") return rows.filter((r) => (r.datum ?? "") >= today);
+    return rows.filter((r) => (r.datum ?? "") < today); // "past"
+  })();
 
-  // Stopps lazy laden: wir nutzen vorhandenen Admin-Endpoint je Tour
-  async function toggleStopps(tour) {
-    const id = tour.id;
-    if (openStops[id]) {
-      setOpenStops((m) => {
-        const c = { ...m };
-        delete c[id];
-        return c;
-      });
-      return;
-    }
-    try {
-      // Minimale Zusatzabfrage: Stopps anzeigen
-      const s = await api.getStoppsByTour(id);
-      setOpenStops((m) => ({ ...m, [id]: s || [] }));
-    } catch (e) {
-      console.error(e);
-      alert("Stopps konnten nicht geladen werden.");
-    }
-  }
+  // Hilfen
+  const telHref = (raw) =>
+    raw ? `tel:${String(raw).replace(/[()\s\-\/]/g, "")}` : "";
+
+  const gmapsSearch = (addr) =>
+    `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr || "")}`;
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl md:text-3xl font-semibold text-[#0058A3]">Gesamtübersicht</h1>
+      <h1 className="text-2xl font-semibold text-[#0058A3]">Gesamtübersicht</h1>
 
       {/* Filter */}
       <section className="bg-white p-4 rounded-lg shadow space-y-3">
         <h2 className="text-lg font-medium text-[#0058A3]">Filter</h2>
+
         <div className="grid lg:grid-cols-5 md:grid-cols-3 grid-cols-1 gap-3">
+          {/* Fahrer */}
           <div>
             <label className="text-sm text-gray-600 block">Fahrer</label>
             <select
@@ -141,6 +177,8 @@ export default function Uebersicht() {
               ))}
             </select>
           </div>
+
+          {/* Datum Von */}
           <div>
             <label className="text-sm text-gray-600 block">Datum von</label>
             <input
@@ -150,6 +188,8 @@ export default function Uebersicht() {
               onChange={(e) => setFilterVon(e.target.value)}
             />
           </div>
+
+          {/* Datum Bis */}
           <div>
             <label className="text-sm text-gray-600 block">Datum bis</label>
             <input
@@ -159,6 +199,8 @@ export default function Uebersicht() {
               onChange={(e) => setFilterBis(e.target.value)}
             />
           </div>
+
+          {/* Kalenderwoche (optional) */}
           <div>
             <label className="text-sm text-gray-600 block">Kalenderwoche</label>
             <input
@@ -167,21 +209,27 @@ export default function Uebersicht() {
               value={filterKw}
               onChange={(e) => setFilterKw(e.target.value)}
             />
+            <p className="text-xs text-gray-500 mt-1">
+              Hinweis: Wenn „Datum von/bis“ gesetzt ist, wird die KW ignoriert.
+            </p>
           </div>
+
+          {/* Kunde */}
           <div>
             <label className="text-sm text-gray-600 block">Kunde</label>
             <input
               type="text"
               className="border rounded-md px-3 py-2 w-full"
-              placeholder="Kundenname…"
+              placeholder="Kundenname suchen…"
               value={filterKunde}
               onChange={(e) => setFilterKunde(e.target.value)}
             />
           </div>
         </div>
+
         <div className="flex gap-3 pt-2">
           <button
-            onClick={ladeTouren}
+            onClick={applyFilter}
             className="bg-[#0058A3] text-white px-4 py-2 rounded-md hover:bg-blue-800"
           >
             Filter anwenden
@@ -193,290 +241,196 @@ export default function Uebersicht() {
             Zurücksetzen
           </button>
         </div>
-      </section>
 
-      {/* Tabs */}
-      <section className="bg-white p-2 rounded-lg shadow">
-        <div className="flex gap-2">
-          <button
-            className={`px-4 py-2 rounded-md ${
-              tab === "alle" ? "bg-[#0058A3] text-white" : "bg-gray-100"
-            }`}
-            onClick={() => setTab("alle")}
-          >
-            Alle
-          </button>
-          <button
-            className={`px-4 py-2 rounded-md ${
-              tab === "zukuenftig" ? "bg-[#0058A3] text-white" : "bg-gray-100"
-            }`}
-            onClick={() => setTab("zukuenftig")}
-          >
-            Zukünftig
-          </button>
-          <button
-            className={`px-4 py-2 rounded-md ${
-              tab === "vergangen" ? "bg-[#0058A3] text-white" : "bg-gray-100"
-            }`}
-            onClick={() => setTab("vergangen")}
-          >
-            Vergangen
-          </button>
+        {/* Status-Tabs (clientseitig) */}
+        <div className="pt-3">
+          <div className="inline-flex rounded-lg overflow-hidden border">
+            {[
+              { id: "alle", label: "Alle" },
+              { id: "future", label: "Bevorstehend" },
+              { id: "past", label: "Vergangen" },
+            ].map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setStatusTab(t.id)}
+                className={
+                  "px-3 py-2 text-sm " +
+                  (statusTab === t.id
+                    ? "bg-[#0058A3] text-white"
+                    : "bg-white hover:bg-gray-50")
+                }
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
         </div>
       </section>
 
-      {/* Mobile Cards */}
-      <section className="md:hidden space-y-3">
-        {loading && <div className="text-gray-500">Laden…</div>}
-        {!loading && msg && <div className="text-gray-600">{msg}</div>}
+      {/* MOBILE: Card-Ansicht (unter md) */}
+      <section className="md:hidden">
+        {loading && (
+          <div className="bg-white rounded-lg shadow p-4 text-gray-500">
+            Laden…
+          </div>
+        )}
 
-        {!loading &&
-          gefiltert.map((t) => {
-            const open = openStops[t.id];
-            const stopps = Array.isArray(open) ? open : null;
-            return (
-              <div key={t.id} className="bg-white border rounded-lg shadow-sm p-4">
+        {!loading && msg && (
+          <div className="bg-white rounded-lg shadow p-4 text-gray-600">
+            {msg}
+          </div>
+        )}
+
+        {!loading && filteredRowsForView.length > 0 && (
+          <div className="space-y-3">
+            {filteredRowsForView.map((r) => (
+              <div
+                key={r.stopp_id}
+                className="bg-white rounded-lg shadow p-4 border"
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="text-xs text-gray-500">{fmtDate(t.datum)}</div>
-                    <div className="text-base font-semibold text-[#0058A3]">
-                      {t.fahrer_name}
-                    </div>
-                    <div className="text-sm text-gray-700 mt-1">
-                      <b>{t.stopps_count ?? 0}</b> Stopps
-                      {t.kunden_preview ? (
-                        <span className="text-gray-500"> · {t.kunden_preview}</span>
-                      ) : null}
+                    <div className="text-xs text-gray-500">{fmt(r.datum)}</div>
+                    <div className="text-sm text-gray-600">{r.fahrer_name}</div>
+                    <div className="mt-1 font-semibold text-gray-900">
+                      {r.position != null ? `Pos ${r.position} · ` : ""}
+                      {r.kunde}
                     </div>
                   </div>
-                  <div className="shrink-0">
-                    <span
-                      className={`text-xs rounded px-2 py-1 ${
-                        String(t.datum) > todayISO
-                          ? "bg-[#E8F8EE] text-[#137A4B]"
-                          : String(t.datum) < todayISO
-                          ? "bg-[#FCE8E8] text-[#9F1C1C]"
-                          : "bg-[#E8F1FA] text-[#0058A3]"
-                      }`}
+                  {/* kleine Badges optional */}
+                </div>
+
+                <div className="mt-3 space-y-1.5 text-[15px]">
+                  <div>
+                    <a
+                      href={gmapsSearch(r.adresse)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:underline break-words"
+                      title="In Google Maps öffnen"
                     >
-                      {String(t.datum) > todayISO
-                        ? "Zukünftig"
-                        : String(t.datum) < todayISO
-                        ? "Vergangen"
-                        : "Heute"}
-                    </span>
+                      {r.adresse}
+                    </a>
                   </div>
-                </div>
 
-                <div className="mt-3">
-                  <button
-                    onClick={() => toggleStopps(t)}
-                    className="w-full bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-md text-sm"
-                  >
-                    {stopps ? "Stopps ausblenden" : "Stopps anzeigen"}
-                  </button>
-                </div>
+                  <div className="text-gray-700">
+                    <span className="font-medium">Kommission:</span>{" "}
+                    {r.kommission || <span className="text-gray-400">–</span>}
+                  </div>
 
-                {stopps && (
-                  <div className="mt-3 space-y-2">
-                    {stopps.length === 0 && (
-                      <div className="text-sm text-gray-500 italic">
-                        Keine Stopps vorhanden
-                      </div>
+                  <div className="text-gray-700">
+                    <span className="font-medium">Hinweis:</span>{" "}
+                    {r.hinweis || <span className="text-gray-400">–</span>}
+                  </div>
+
+                  <div className="text-gray-700">
+                    <span className="font-medium">Anmerkung Fahrer:</span>{" "}
+                    {r.anmerkung_fahrer || (
+                      <span className="text-gray-400">–</span>
                     )}
-                    {stopps.map((s) => (
-                      <div key={s.id} className="border rounded-md p-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="text-xs text-gray-500">
-                              Pos. {Number.isFinite(s.position) ? s.position : "–"}
-                            </div>
-                            <div className="text-sm font-semibold text-[#0058A3] break-words">
-                              {s.kunde || "—"}
-                            </div>
-                          </div>
-                          {s.ankunft ? (
-                            <span className="text-xs bg-[#E8F1FA] text-[#0058A3] px-2 py-1 rounded">
-                              {s.ankunft}
-                            </span>
-                          ) : null}
-                        </div>
-
-                        <div className="mt-2 space-y-1 text-sm">
-                          <div className="flex gap-2">
-                            <span>📍</span>
-                            {s.adresse ? (
-                              <a
-                                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                                  s.adresse
-                                )}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-blue-600 hover:underline break-words"
-                              >
-                                {s.adresse}
-                              </a>
-                            ) : (
-                              <span className="text-gray-500">Keine Adresse</span>
-                            )}
-                          </div>
-                          <div className="flex gap-2">
-                            <span>📞</span>
-                            {s.telefon ? (
-                              <a className="text-blue-600 hover:underline" href={telHref(s.telefon)}>
-                                {s.telefon}
-                              </a>
-                            ) : (
-                              <span className="text-gray-500">—</span>
-                            )}
-                          </div>
-                          {(s.kommission || s.hinweis) && (
-                            <div className="flex gap-2">
-                              <span>📝</span>
-                              <span className="break-words">
-                                {s.kommission || s.hinweis}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
                   </div>
-                )}
+
+                  <div className="text-gray-700">
+                    <span className="font-medium">Bemerkung Tour:</span>{" "}
+                    {r.tour_bemerkung || (
+                      <span className="text-gray-400">–</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Quick Actions */}
+                <div className="mt-4 flex items-center gap-2">
+                  {r.telefon ? (
+                    <a
+                      href={telHref(r.telefon)}
+                      className="inline-flex items-center gap-2 px-3 py-2 rounded-md border hover:bg-gray-50"
+                    >
+                      📞 <span className="text-sm">{r.telefon}</span>
+                    </a>
+                  ) : null}
+
+                  <a
+                    href={gmapsSearch(r.adresse)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-md border hover:bg-gray-50"
+                  >
+                    🗺️ <span className="text-sm">Route</span>
+                  </a>
+                </div>
               </div>
-            );
-          })}
+            ))}
+          </div>
+        )}
       </section>
 
-      {/* Desktop Tabelle */}
-      <section className="hidden md:block bg-white p-4 rounded-lg shadow space-y-3">
-        <h2 className="text-lg font-medium text-[#0058A3]">Touren (Tabelle)</h2>
+      {/* DESKTOP: Tabelle (ab md) */}
+      <section className="bg-white p-4 rounded-lg shadow space-y-3 hidden md:block">
+        <h2 className="text-lg font-medium text-[#0058A3]">Stopps</h2>
+
         {loading && <div className="text-gray-500">Laden…</div>}
         {!loading && msg && <div className="text-gray-600">{msg}</div>}
 
-        {!loading && gefiltert.length > 0 && (
+        {!loading && filteredRowsForView.length > 0 && (
           <div className="overflow-x-auto">
             <table className="min-w-full border text-sm">
               <thead className="bg-[#0058A3] text-white">
                 <tr>
                   <th className="border px-2 py-1 text-left">Datum</th>
                   <th className="border px-2 py-1 text-left">Fahrer</th>
-                  <th className="border px-2 py-1 text-left">Stopps</th>
-                  <th className="border px-2 py-1 text-left">Kunden (Auszug)</th>
-                  <th className="border px-2 py-1 text-left">Status</th>
-                  <th className="border px-2 py-1 text-left">Aktionen</th>
+                  <th className="border px-2 py-1 text-left">Pos</th>
+                  <th className="border px-2 py-1 text-left">Kunde</th>
+                  <th className="border px-2 py-1 text-left">Adresse</th>
+                  <th className="border px-2 py-1 text-left">Telefon</th>
+                  <th className="border px-2 py-1 text-left">Kommission</th>
+                  <th className="border px-2 py-1 text-left">Hinweis</th>
+                  <th className="border px-2 py-1 text-left">Anmerkung Fahrer</th>
+                  <th className="border px-2 py-1 text-left">Bemerkung Tour</th>
                 </tr>
               </thead>
               <tbody>
-                {gefiltert.map((t) => (
-                  <tr key={t.id} className="hover:bg-gray-50">
-                    <td className="border px-2 py-1">{fmtDate(t.datum)}</td>
-                    <td className="border px-2 py-1">{t.fahrer_name}</td>
-                    <td className="border px-2 py-1">{t.stopps_count}</td>
+                {filteredRowsForView.map((r) => (
+                  <tr key={r.stopp_id} className="hover:bg-gray-50">
+                    <td className="border px-2 py-1">{fmt(r.datum)}</td>
+                    <td className="border px-2 py-1">{r.fahrer_name}</td>
+                    <td className="border px-2 py-1">{r.position ?? ""}</td>
+                    <td className="border px-2 py-1">{r.kunde}</td>
                     <td className="border px-2 py-1">
-                      {t.kunden_preview || <span className="text-gray-400">–</span>}
+                      <a
+                        className="text-blue-600 hover:underline"
+                        href={gmapsSearch(r.adresse)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {r.adresse}
+                      </a>
                     </td>
                     <td className="border px-2 py-1">
-                      {String(t.datum) > todayISO ? (
-                        <span className="text-xs rounded px-2 py-1 bg-[#E8F8EE] text-[#137A4B]">
-                          Zukünftig
-                        </span>
-                      ) : String(t.datum) < todayISO ? (
-                        <span className="text-xs rounded px-2 py-1 bg-[#FCE8E8] text-[#9F1C1C]">
-                          Vergangen
-                        </span>
+                      {r.telefon ? (
+                        <a
+                          className="text-blue-600 hover:underline"
+                          href={telHref(r.telefon)}
+                        >
+                          {r.telefon}
+                        </a>
                       ) : (
-                        <span className="text-xs rounded px-2 py-1 bg-[#E8F1FA] text-[#0058A3]">
-                          Heute
-                        </span>
+                        <span className="text-gray-400">–</span>
                       )}
                     </td>
                     <td className="border px-2 py-1">
-                      <button
-                        onClick={() => toggleStopps(t)}
-                        className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
-                      >
-                        {openStops[t.id] ? "Stopps ausblenden" : "Stopps anzeigen"}
-                      </button>
+                      {r.kommission || <span className="text-gray-400">–</span>}
+                    </td>
+                    <td className="border px-2 py-1">
+                      {r.hinweis || <span className="text-gray-400">–</span>}
+                    </td>
+                    <td className="border px-2 py-1">
+                      {r.anmerkung_fahrer || <span className="text-gray-400">–</span>}
+                    </td>
+                    <td className="border px-2 py-1">
+                      {r.tour_bemerkung || <span className="text-gray-400">–</span>}
                     </td>
                   </tr>
                 ))}
-
-                {/* Unterzeilen: Stopps (wenn geöffnet) */}
-                {gefiltert.map((t) => {
-                  const stopps = Array.isArray(openStops[t.id]) ? openStops[t.id] : null;
-                  if (!stopps) return null;
-                  return (
-                    <tr key={`${t.id}-stopps`}>
-                      <td className="border px-2 py-2 bg-gray-50" colSpan={6}>
-                        <div className="overflow-x-auto">
-                          <table className="min-w-full border text-sm">
-                            <thead className="bg-gray-200">
-                              <tr>
-                                <th className="border px-2 py-1 text-left">Pos</th>
-                                <th className="border px-2 py-1 text-left">Kunde</th>
-                                <th className="border px-2 py-1 text-left">Adresse</th>
-                                <th className="border px-2 py-1 text-left">Telefon</th>
-                                <th className="border px-2 py-1 text-left">Kommission</th>
-                                <th className="border px-2 py-1 text-left">Hinweis</th>
-                                <th className="border px-2 py-1 text-left">Ankunft</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {stopps.length === 0 && (
-                                <tr>
-                                  <td colSpan={7} className="text-center py-2 text-gray-500">
-                                    Keine Stopps
-                                  </td>
-                                </tr>
-                              )}
-                              {stopps.map((s) => (
-                                <tr key={s.id} className="hover:bg-white">
-                                  <td className="border px-2 py-1 w-16 text-center">
-                                    {Number.isFinite(s.position) ? s.position : ""}
-                                  </td>
-                                  <td className="border px-2 py-1">{s.kunde}</td>
-                                  <td className="border px-2 py-1">
-                                    {s.adresse ? (
-                                      <a
-                                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                                          s.adresse
-                                        )}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-blue-600 hover:underline break-words"
-                                      >
-                                        {s.adresse}
-                                      </a>
-                                    ) : (
-                                      "—"
-                                    )}
-                                  </td>
-                                  <td className="border px-2 py-1">
-                                    {s.telefon ? (
-                                      <a className="text-blue-600 hover:underline" href={telHref(s.telefon)}>
-                                        {s.telefon}
-                                      </a>
-                                    ) : (
-                                      "—"
-                                    )}
-                                  </td>
-                                  <td className="border px-2 py-1">
-                                    {s.kommission || <span className="text-gray-400">—</span>}
-                                  </td>
-                                  <td className="border px-2 py-1">
-                                    {s.hinweis || <span className="text-gray-400">—</span>}
-                                  </td>
-                                  <td className="border px-2 py-1">{s.ankunft || "—"}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
               </tbody>
             </table>
           </div>
