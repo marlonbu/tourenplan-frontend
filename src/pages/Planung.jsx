@@ -1,5 +1,12 @@
+// src/pages/Planung.jsx
 import React, { useEffect, useState } from "react";
 import { api } from "../api";
+
+function telHref(raw) {
+  if (!raw) return "";
+  const cleaned = String(raw).replace(/[()\s\-\/]/g, "");
+  return `tel:${cleaned}`;
+}
 
 export default function Planung() {
   const [fahrer, setFahrer] = useState([]);
@@ -241,40 +248,119 @@ export default function Planung() {
         <section className="bg-white p-4 rounded-lg shadow space-y-4">
           <h2 className="text-lg font-medium text-[#0058A3]">Stopps der Tour</h2>
 
-          {/* Tabelle */}
-          <table className="min-w-full border text-sm">
-            <thead className="bg-[#0058A3] text-white">
-              <tr>
-                <th className="border px-2 py-1">Pos</th>
-                <th className="border px-2 py-1">Kunde</th>
-                <th className="border px-2 py-1">Adresse</th>
-                <th className="border px-2 py-1">Telefon</th>
-                <th className="border px-2 py-1">Kommission</th>
-                <th className="border px-2 py-1">Hinweis</th>
-                <th className="border px-2 py-1">Ankunft</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stopps.length === 0 && (
+          {/* ---------- Mobile Cards (unter md) ---------- */}
+          <div className="md:hidden space-y-3">
+            {stopps.length === 0 && (
+              <div className="text-center py-2 text-gray-500 italic">
+                Keine Stopps vorhanden
+              </div>
+            )}
+
+            {stopps.map((s) => (
+              <div
+                key={s.id}
+                className="border rounded-lg p-4 bg-white shadow-sm"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xs text-gray-500 uppercase">
+                      Pos. {Number.isFinite(s.position) ? s.position : "–"}
+                    </div>
+                    <div className="text-base font-semibold text-[#0058A3] break-words">
+                      {s.kunde || "—"}
+                    </div>
+                  </div>
+                  {s.ankunft ? (
+                    <span className="text-sm bg-[#E8F1FA] text-[#0058A3] px-2 py-1 rounded">
+                      {s.ankunft}
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="mt-2 space-y-1 text-sm">
+                  <div className="flex gap-2">
+                    <span>📍</span>
+                    {s.adresse ? (
+                      <a
+                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                          s.adresse
+                        )}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:underline break-words"
+                      >
+                        {s.adresse}
+                      </a>
+                    ) : (
+                      <span className="text-gray-500">Keine Adresse</span>
+                    )}
+                  </div>
+
+                  <div className="flex gap-2">
+                    <span>📦</span>
+                    <span className="break-words">
+                      {s.kommission || <span className="text-gray-500">—</span>}
+                    </span>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <span>📝</span>
+                    <span className="break-words">
+                      {s.hinweis || <span className="text-gray-500">—</span>}
+                    </span>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <span>📞</span>
+                    {s.telefon ? (
+                      <a className="text-blue-600 hover:underline" href={telHref(s.telefon)}>
+                        {s.telefon}
+                      </a>
+                    ) : (
+                      <span className="text-gray-500">—</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* ---------- Desktop-Tabelle (ab md) bleibt identisch ---------- */}
+          <div className="hidden md:block">
+            <table className="min-w-full border text-sm">
+              <thead className="bg-[#0058A3] text-white">
                 <tr>
-                  <td colSpan="7" className="text-center py-2 text-gray-500 italic">
-                    Keine Stopps vorhanden
-                  </td>
+                  <th className="border px-2 py-1">Pos</th>
+                  <th className="border px-2 py-1">Kunde</th>
+                  <th className="border px-2 py-1">Adresse</th>
+                  <th className="border px-2 py-1">Telefon</th>
+                  <th className="border px-2 py-1">Kommission</th>
+                  <th className="border px-2 py-1">Hinweis</th>
+                  <th className="border px-2 py-1">Ankunft</th>
                 </tr>
-              )}
-              {stopps.map((s) => (
-                <tr key={s.id} className="hover:bg-gray-50">
-                  <td className="border px-2 py-1 text-center">{s.position ?? ""}</td>
-                  <td className="border px-2 py-1">{s.kunde}</td>
-                  <td className="border px-2 py-1">{s.adresse}</td>
-                  <td className="border px-2 py-1">{s.telefon || ""}</td>
-                  <td className="border px-2 py-1">{s.kommission || ""}</td>
-                  <td className="border px-2 py-1">{s.hinweis || ""}</td>
-                  <td className="border px-2 py-1">{s.ankunft || ""}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {stopps.length === 0 && (
+                  <tr>
+                    <td colSpan="7" className="text-center py-2 text-gray-500 italic">
+                      Keine Stopps vorhanden
+                    </td>
+                  </tr>
+                )}
+                {stopps.map((s) => (
+                  <tr key={s.id} className="hover:bg-gray-50">
+                    <td className="border px-2 py-1 text-center">{s.position ?? ""}</td>
+                    <td className="border px-2 py-1">{s.kunde}</td>
+                    <td className="border px-2 py-1">{s.adresse}</td>
+                    <td className="border px-2 py-1">{s.telefon || ""}</td>
+                    <td className="border px-2 py-1">{s.kommission || ""}</td>
+                    <td className="border px-2 py-1">{s.hinweis || ""}</td>
+                    <td className="border px-2 py-1">{s.ankunft || ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
           {/* Formular Neuer Stopp */}
           <div className="border-t pt-4">
@@ -282,7 +368,63 @@ export default function Planung() {
               + Neuen Stopp hinzufügen
             </h3>
 
-            <div className="grid md:grid-cols-3 gap-3">
+            {/* Mobile Card-Form */}
+            <div className="md:hidden space-y-3 bg-white border rounded-lg p-4 shadow-sm">
+              <input
+                className="border rounded-md px-3 py-3 w-full"
+                placeholder="Kunde"
+                value={neuStopp.kunde}
+                onChange={(e) => setNeuStopp({ ...neuStopp, kunde: e.target.value })}
+              />
+              <input
+                className="border rounded-md px-3 py-3 w-full"
+                placeholder="Adresse"
+                value={neuStopp.adresse}
+                onChange={(e) => setNeuStopp({ ...neuStopp, adresse: e.target.value })}
+              />
+              <input
+                className="border rounded-md px-3 py-3 w-full"
+                placeholder="Telefon"
+                value={neuStopp.telefon}
+                onChange={(e) => setNeuStopp({ ...neuStopp, telefon: e.target.value })}
+              />
+              <input
+                className="border rounded-md px-3 py-3 w-full"
+                placeholder="Kommission"
+                value={neuStopp.kommission}
+                onChange={(e) => setNeuStopp({ ...neuStopp, kommission: e.target.value })}
+              />
+              <input
+                className="border rounded-md px-3 py-3 w-full"
+                placeholder="Hinweis"
+                value={neuStopp.hinweis}
+                onChange={(e) => setNeuStopp({ ...neuStopp, hinweis: e.target.value })}
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  className="border rounded-md px-3 py-3 w-full"
+                  placeholder="Position (z. B. 1, 2, 3)"
+                  value={neuStopp.position}
+                  onChange={(e) => setNeuStopp({ ...neuStopp, position: e.target.value })}
+                />
+                <input
+                  className="border rounded-md px-3 py-3 w-full"
+                  placeholder='Ankunft (z. B. "10:00")'
+                  value={neuStopp.ankunft}
+                  onChange={(e) => setNeuStopp({ ...neuStopp, ankunft: e.target.value })}
+                />
+              </div>
+
+              <button
+                onClick={addStopp}
+                className="w-full mt-1 bg-[#0058A3] text-white px-4 py-3 rounded-md hover:bg-blue-800"
+              >
+                + Stopp hinzufügen
+              </button>
+            </div>
+
+            {/* Desktop-Form bleibt identisch */}
+            <div className="hidden md:grid md:grid-cols-3 gap-3">
               <input
                 className="border rounded-md px-3 py-2"
                 placeholder="Kunde"
@@ -325,14 +467,15 @@ export default function Planung() {
                 value={neuStopp.ankunft}
                 onChange={(e) => setNeuStopp({ ...neuStopp, ankunft: e.target.value })}
               />
+              <div className="md:col-span-3">
+                <button
+                  onClick={addStopp}
+                  className="mt-1 bg-[#0058A3] text-white px-4 py-2 rounded-md hover:bg-blue-800"
+                >
+                  + Stopp hinzufügen
+                </button>
+              </div>
             </div>
-
-            <button
-              onClick={addStopp}
-              className="mt-3 bg-[#0058A3] text-white px-4 py-2 rounded-md hover:bg-blue-800"
-            >
-              + Stopp hinzufügen
-            </button>
           </div>
         </section>
       )}
