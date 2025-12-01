@@ -42,7 +42,7 @@ function StatusBadge({ dateISO, todayISO }) {
 }
 
 // ---- Sortable Item (Desktop - Tabellenzeile)
-function SortableRow({ tour, children, id, onGrab }) {
+function SortableRow({ children, id }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -54,12 +54,11 @@ function SortableRow({ tour, children, id, onGrab }) {
       style={style}
       className={`hover:bg-gray-50 ${isDragging ? "opacity-75 ring-2 ring-[#0058A3]" : ""}`}
     >
-      {/* Grip-Handle als separate Zelle */}
-      <td className="border px-2 py-1 w-10 text-gray-500">
+      {/* Grip-Handle */}
+      <td className="border px-2 py-1 w-[40px] text-gray-500 dnd-col-handle">
         <button
           {...attributes}
           {...listeners}
-          onPointerDown={onGrab}
           className="cursor-grab active:cursor-grabbing inline-flex items-center"
           aria-label="Reihenfolge ändern"
           title="Ziehen zum Sortieren"
@@ -128,6 +127,8 @@ export default function Uebersicht() {
   // Drag&Drop State
   const [ordered, setOrdered] = useState([]); // aktuell sichtbare, geordnete Liste (ids)
   const [activeId, setActiveId] = useState(null);
+  const isDraggingTable = activeId != null; // <<< wichtig für Table-DND-Fix
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 120, tolerance: 6 } })
@@ -160,7 +161,6 @@ export default function Uebersicht() {
       };
       const data = await api.getTourenAdmin(payload);
       setTouren(data || []);
-      // initiale ordered-Ids aus der gelieferten Sortierung
       setOrdered((data || []).map((t) => t.id));
       if (!data || data.length === 0) setMsg("Keine Touren gefunden.");
     } catch (err) {
@@ -190,14 +190,13 @@ export default function Uebersicht() {
     if (!arr?.length) return [];
     if (tab === "zukuenftig") arr = arr.filter((t) => String(t.datum) > todayISO);
     else if (tab === "vergangen") arr = arr.filter((t) => String(t.datum) < todayISO);
-    // Reihenfolge gemäß 'ordered' abbilden (nur sichtbare IDs)
     const setVisible = new Set(arr.map((t) => t.id));
     const idsInOrder = ordered.filter((id) => setVisible.has(id));
     const mapById = new Map(arr.map((t) => [t.id, t]));
     return idsInOrder.map((id) => mapById.get(id)).filter(Boolean);
   }, [touren, tab, todayISO, ordered]);
 
-  // Stopps lazy laden: wir nutzen vorhandenen Admin-Endpoint je Tour
+  // Stopps lazy laden
   async function toggleStopps(tour) {
     const id = tour.id;
     if (openStops[id]) {
@@ -227,7 +226,6 @@ export default function Uebersicht() {
     setActiveId(null);
     if (!over || active.id === over.id) return;
 
-    // Optimistisch neu anordnen (nur sichtbarer Ausschnitt)
     const visIds = gefiltert.map((t) => t.id);
     const oldIndex = visIds.indexOf(active.id);
     const newIndex = visIds.indexOf(over.id);
@@ -235,21 +233,17 @@ export default function Uebersicht() {
 
     const newVis = arrayMove(visIds, oldIndex, newIndex);
 
-    // 'ordered' aktualisieren, indem wir die sichtbaren ids in ihrer neuen Reihenfolge
-    // wieder in das Gesamtarray einsetzen.
     setOrdered((prev) => {
       const setVis = new Set(visIds);
       const rest = prev.filter((id) => !setVis.has(id));
       return [...newVis, ...rest];
     });
 
-    // Persistieren (nur sichtbarer Teil, reicht – andere behalten ihren Index)
     try {
       await api.reorderTouren(newVis);
     } catch (e) {
       console.error(e);
       alert("Reihenfolge konnte nicht gespeichert werden.");
-      // roll back: neu laden
       ladeTouren();
     }
   }
@@ -492,30 +486,32 @@ export default function Uebersicht() {
               <table className="min-w-full border text-sm">
                 <thead className="bg-[#0058A3] text-white">
                   <tr>
-                    <th className="border px-2 py-1 w-10"></th>
-                    <th className="border px-2 py-1 text-left">Datum</th>
-                    <th className="border px-2 py-1 text-left">Fahrer</th>
-                    <th className="border px-2 py-1 text-left">Stopps</th>
-                    <th className="border px-2 py-1 text-left">Kunden (Auszug)</th>
-                    <th className="border px-2 py-1 text-left">Status</th>
-                    <th className="border px-2 py-1 text-left">Aktionen</th>
+                    <th className="border px-2 py-1 w-[40px]"></th>
+                    <th className="border px-2 py-1 text-left w-[140px]">Datum</th>
+                    <th className="border px-2 py-1 text-left w-[220px]">Fahrer</th>
+                    <th className="border px-2 py-1 text-left w-[90px]">Stopps</th>
+                    <th className="border px-2 py-1 text-left w-[420px]">Kunden (Auszug)</th>
+                    <th className="border px-2 py-1 text-left w-[120px]">Status</th>
+                    <th className="border px-2 py-1 text-left w-[180px]">Aktionen</th>
                   </tr>
                 </thead>
+
+                {/* WICHTIG: Während des Drag-Vorgangs auf Block/Flex schalten */}
                 <SortableContext items={gefiltert.map((t) => t.id)} strategy={verticalListSortingStrategy}>
-                  <tbody>
+                  <tbody className={`dnd-table-body ${isDraggingTable ? "dragging" : ""}`}>
                     {gefiltert.map((t) => (
-                      <SortableRow key={t.id} id={t.id} tour={t}>
+                      <SortableRow key={t.id} id={t.id}>
                         <>
-                          <td className="border px-2 py-1">{fmtDate(t.datum)}</td>
-                          <td className="border px-2 py-1">{t.fahrer_name}</td>
-                          <td className="border px-2 py-1">{t.stopps_count}</td>
-                          <td className="border px-2 py-1">
+                          <td className="border px-2 py-1 w-[140px]">{fmtDate(t.datum)}</td>
+                          <td className="border px-2 py-1 w-[220px]">{t.fahrer_name}</td>
+                          <td className="border px-2 py-1 w-[90px]">{t.stopps_count}</td>
+                          <td className="border px-2 py-1 w-[420px]">
                             {t.kunden_preview || <span className="text-gray-400">–</span>}
                           </td>
-                          <td className="border px-2 py-1">
+                          <td className="border px-2 py-1 w-[120px]">
                             <StatusBadge dateISO={t.datum} todayISO={todayISO} />
                           </td>
-                          <td className="border px-2 py-1">
+                          <td className="border px-2 py-1 w-[180px]">
                             <button
                               onClick={() => toggleStopps(t)}
                               className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
@@ -532,7 +528,7 @@ export default function Uebersicht() {
                       const stopps = Array.isArray(openStops[t.id]) ? openStops[t.id] : null;
                       if (!stopps) return null;
                       return (
-                        <tr key={`${t.id}-stopps`}>
+                        <tr key={`${t.id}-stopps`} className="dnd-row-stopps">
                           <td className="border px-2 py-2 bg-gray-50" colSpan={7}>
                             <div className="overflow-x-auto">
                               <table className="min-w-full border text-sm">
