@@ -110,6 +110,17 @@ export const api = {
     return parseJsonSafe(res);
   },
 
+  // ---- Reihenfolge speichern (NEU) ----
+  async reorderTouren(ids) {
+    const res = await fetch(`${BASE_URL}/touren-admin/reorder`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ ids: ids || [] }),
+    });
+    if (!res.ok) throw new Error("Reihenfolge konnte nicht gespeichert werden");
+    return parseJsonSafe(res);
+  },
+
   // ---- Stopps ----
   async getStoppsByTour(tourId) {
     const res = await fetch(`${BASE_URL}/touren/${tourId}/stopps`, {
