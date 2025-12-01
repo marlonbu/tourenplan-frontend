@@ -1,5 +1,5 @@
 // src/pages/Tourverwaltung.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 
 // Datum hübsch
@@ -55,6 +55,19 @@ export default function Tourverwaltung() {
     busy: false,
     error: "",
   });
+
+  // ---- Neu: Tab-Filter (Alle/Zukünftig/Vergangen) ----
+  const [tab, setTab] = useState("alle");
+  const todayISO = new Date().toISOString().slice(0, 10);
+
+  // Clientseitige Tab-Filterung (wie in Gesamtübersicht)
+  const tourenGefiltert = useMemo(() => {
+    if (!touren?.length) return [];
+    if (tab === "alle") return touren;
+    if (tab === "zukuenftig") return touren.filter((t) => String(t.datum) > todayISO);
+    if (tab === "vergangen") return touren.filter((t) => String(t.datum) < todayISO);
+    return touren;
+  }, [touren, tab, todayISO]);
 
   useEffect(() => {
     ladeFahrer();
@@ -372,6 +385,28 @@ export default function Tourverwaltung() {
     }
   }
 
+  // Status-Badge (gleiches Schema wie Übersicht)
+  function StatusBadge({ datum }) {
+    const d = String(datum);
+    if (d > todayISO)
+      return (
+        <span className="text-xs rounded px-2 py-1 bg-[#E8F8EE] text-[#137A4B]">
+          Zukünftig
+        </span>
+      );
+    if (d < todayISO)
+      return (
+        <span className="text-xs rounded px-2 py-1 bg-[#FCE8E8] text-[#9F1C1C]">
+          Vergangen
+        </span>
+      );
+    return (
+      <span className="text-xs rounded px-2 py-1 bg-[#E8F1FA] text-[#0058A3]">
+        Heute
+      </span>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold text-[#0058A3]">Tourverwaltung</h1>
@@ -447,12 +482,36 @@ export default function Tourverwaltung() {
         </div>
       </section>
 
+      {/* ===== Tabs: Alle / Zukünftig / Vergangen ===== */}
+      <section className="bg-white p-2 rounded-lg shadow">
+        <div className="flex gap-2">
+          <button
+            className={`px-4 py-2 rounded-md ${tab === "alle" ? "bg-[#0058A3] text-white" : "bg-gray-100"}`}
+            onClick={() => setTab("alle")}
+          >
+            Alle
+          </button>
+          <button
+            className={`px-4 py-2 rounded-md ${tab === "zukuenftig" ? "bg-[#0058A3] text-white" : "bg-gray-100"}`}
+            onClick={() => setTab("zukuenftig")}
+          >
+            Zukünftig
+          </button>
+          <button
+            className={`px-4 py-2 rounded-md ${tab === "vergangen" ? "bg-[#0058A3] text-white" : "bg-gray-100"}`}
+            onClick={() => setTab("vergangen")}
+          >
+            Vergangen
+          </button>
+        </div>
+      </section>
+
       {/* ================= MOBILE: Kartenansicht ================= */}
       <section className="md:hidden space-y-3">
         {loading && <div className="text-gray-500">Laden…</div>}
         {!loading && msg && <div className="text-gray-600">{msg}</div>}
 
-        {!loading && touren.map((t) => {
+        {!loading && tourenGefiltert.map((t) => {
           const stopps = stoppsMap[t.id] || null;
           const isEdit = !!editTour[t.id];
 
@@ -471,6 +530,9 @@ export default function Tourverwaltung() {
                       <span className="text-gray-500"> · {t.kunden_preview}</span>
                     ) : null}
                   </div>
+                </div>
+                <div className="shrink-0">
+                  <StatusBadge datum={t.datum} />
                 </div>
               </div>
 
@@ -746,14 +808,14 @@ export default function Tourverwaltung() {
         })}
       </section>
 
-      {/* ================= DESKTOP: Tabelle bleibt unverändert ================= */}
+      {/* ================= DESKTOP: Tabelle mit Status-Spalte ================= */}
       <section className="hidden md:block bg-white p-4 rounded-lg shadow space-y-3">
         <h2 className="text-lg font-medium text-[#0058A3]">Touren</h2>
 
         {loading && <div className="text-gray-500">Laden…</div>}
         {!loading && msg && <div className="text-gray-600">{msg}</div>}
 
-        {!loading && touren.length > 0 && (
+        {!loading && tourenGefiltert.length > 0 && (
           <div className="overflow-x-auto">
             <table className="min-w-full border text-sm">
               <thead className="bg-[#0058A3] text-white">
@@ -763,11 +825,12 @@ export default function Tourverwaltung() {
                   <th className="border px-2 py-1 text-left">Stopps</th>
                   <th className="border px-2 py-1 text-left">Kunden (Auszug)</th>
                   <th className="border px-2 py-1 text-left">Bemerkung</th>
+                  <th className="border px-2 py-1 text-left">Status</th>
                   <th className="border px-2 py-1 text-left">Aktionen</th>
                 </tr>
               </thead>
               <tbody>
-                {touren.map((t) => {
+                {tourenGefiltert.map((t) => {
                   const isEdit = !!editTour[t.id];
                   return (
                     <React.Fragment key={t.id}>
@@ -828,6 +891,12 @@ export default function Tourverwaltung() {
                             t.bemerkung || <span className="text-gray-400">–</span>
                           )}
                         </td>
+
+                        {/* Status */}
+                        <td className="border px-2 py-1">
+                          <StatusBadge datum={t.datum} />
+                        </td>
+
                         <td className="border px-2 py-1">
                           {!isEdit ? (
                             <div className="flex flex-wrap gap-2">
@@ -872,7 +941,8 @@ export default function Tourverwaltung() {
                       {/* Untertabelle Stopps */}
                       {stoppsMap[t.id] && (
                         <tr>
-                          <td className="border px-2 py-2 bg-gray-50" colSpan={6}>
+                          {/* colSpan von 7 (wegen zusätzlicher Status-Spalte) */}
+                          <td className="border px-2 py-2 bg-gray-50" colSpan={7}>
                             <div className="overflow-x-auto">
                               <table className="min-w-full border text-sm">
                                 <thead className="bg-gray-200">
@@ -900,7 +970,7 @@ export default function Tourverwaltung() {
                                     const draft = stoppDraft[s.id] || {};
                                     return (
                                       <tr key={s.id} className="hover:bg-white">
-                                        {/* Pos — Breiter gemacht (~0,5 cm) */}
+                                        {/* Pos — etwas breiter (ca. 0,5 cm) */}
                                         <td className="border px-2 py-1 w-[84px]">
                                           {!isEditing ? (
                                             s.position ?? ""
