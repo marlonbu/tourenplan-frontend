@@ -900,8 +900,8 @@ export default function Tourverwaltung() {
                                     const draft = stoppDraft[s.id] || {};
                                     return (
                                       <tr key={s.id} className="hover:bg-white">
-                                        {/* Pos */}
-                                        <td className="border px-2 py-1 w-16">
+                                        {/* Pos — Breiter gemacht (~0,5 cm) */}
+                                        <td className="border px-2 py-1 w-[84px]">
                                           {!isEditing ? (
                                             s.position ?? ""
                                           ) : (
