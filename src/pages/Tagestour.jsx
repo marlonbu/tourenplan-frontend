@@ -73,24 +73,29 @@ function telHref(raw) {
   return `tel:${cleaned}`;
 }
 
-// Google-Maps URL: origin = Firma (Koordinaten), destination = letzter Stopp, waypoints = restliche Stopps
+/**
+ * Google-Maps URL:
+ * origin   = Firma (Koordinaten)
+ * waypoints= alle Kundenstopps in Reihenfolge
+ * destination = Firma (Textadresse)
+ * --> Route: Firma -> ...Stopps... -> Firma (Rückweg)
+ * Hinweis: Das beeinflusst NICHT die OSRM/OSM-Karte.
+ */
 function buildGoogleMapsRouteURL(startOrigin, stopps) {
   const addrs = (stopps || [])
     .map((s) => s?.adresse)
     .filter(Boolean);
 
+  // keine Stopps -> nur Firma anzeigen
   if (addrs.length === 0) {
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
       startOrigin
     )}`;
   }
 
-  const origin = encodeURIComponent(startOrigin);
-  const destination = encodeURIComponent(addrs[addrs.length - 1]);
-  const waypoints =
-    addrs.length > 1
-      ? `&waypoints=${encodeURIComponent(addrs.slice(0, -1).join("|"))}`
-      : "";
+  const origin = encodeURIComponent(startOrigin);           // Koordinaten der Firma
+  const destination = encodeURIComponent(START_ADRESSE);    // Firma als Textadresse (Rückweg)
+  const waypoints = `&waypoints=${encodeURIComponent(addrs.join("|"))}`;
 
   return `https://www.google.com/maps/dir/?api=1&travelmode=driving&origin=${origin}&destination=${destination}${waypoints}`;
 }
@@ -206,7 +211,7 @@ export default function Tagestour() {
       ];
       setMarkerCoords(mCoords);
 
-      // 4) Route (OSRM)
+      // 4) Route (OSRM) – KEIN Rückweg zur Firma (nur OSM-Anzeige)
       const routeInput = [firmCoord, ...geos.map((g) => g.coord).filter(Boolean)].filter(
         Boolean
       );
@@ -310,7 +315,7 @@ export default function Tagestour() {
     }
   }
 
-  // Google-Maps Button URL (Firma -> ... -> letzter Kunde), Origin via Koordinaten
+  // Google-Maps Button URL (Firma -> Stopps -> Firma/Rückweg)
   const gmapsUrl = buildGoogleMapsRouteURL(GMAPS_ORIGIN, stopps);
 
   // Quick-Foto: ausgewählten Stopp anklicken -> zugehörigen versteckten Input triggern
