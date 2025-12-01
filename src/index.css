@@ -118,3 +118,19 @@ label {
   -webkit-tap-highlight-color: transparent; /* angenehmeres Tap-Verhalten auf Mobil */
   touch-action: manipulation;               /* schnellere Reaktionen auf Tap */
 }
+/* === DND-Fix für Tabellen (nur während Drag aktiv) === */
+.dnd-table-body.dragging {
+  display: block;                /* tbody wird blockig */
+}
+.dnd-table-body.dragging > tr {
+  display: flex;                 /* jede Zeile wird flexbar */
+  align-items: stretch;
+  width: max-content;            /* horizontales Scrollen bleibt funktional */
+}
+.dnd-table-body.dragging > tr > td,
+.dnd-table-body.dragging > tr > th {
+  display: block;                /* Zellen verhalten sich "blockig" */
+}
+
+/* optionale Hilfsklassen für Spaltenbreiten im Drag-Modus */
+.dnd-col-handle { width: 40px; min-width: 40px; }
