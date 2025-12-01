@@ -1,120 +1,16 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-/* Basis-Farben und globale Layoutanpassung */
-body {
-  @apply bg-gehlenborg-gray text-gray-800 font-sans;
+/* === DND-Fix für Tabellen (nur während Drag aktiv) === */
+.dnd-table-body.dragging {
+  display: block;                /* tbody wird blockig */
+}
+.dnd-table-body.dragging > tr {
+  display: flex;                 /* jede Zeile wird flexbar */
+  align-items: stretch;
+  width: max-content;            /* horizontales Scrollen bleibt funktional */
+}
+.dnd-table-body.dragging > tr > td,
+.dnd-table-body.dragging > tr > th {
+  display: block;                /* Zellen verhalten sich "blockig" */
 }
 
-/* Karten und Container */
-.card {
-  @apply bg-white rounded-xl shadow-soft p-4;
-}
-
-/* Buttons */
-.btn {
-  @apply inline-flex items-center justify-center font-semibold rounded-md px-4 py-2 transition;
-}
-
-.btn-blue {
-  @apply bg-gehlenborg-blue text-white hover:bg-gehlenborg-dark;
-}
-
-.btn-green {
-  @apply bg-green-600 text-white hover:bg-green-700;
-}
-
-.btn-red {
-  @apply bg-red-500 text-white hover:bg-red-600;
-}
-
-/* Tabellen */
-.table {
-  @apply w-full border-collapse text-sm;
-}
-
-.table th {
-  @apply bg-gehlenborg-blue text-white font-semibold text-left px-3 py-2;
-}
-
-.table td {
-  @apply border-b border-gray-200 px-3 py-2;
-}
-
-/* Input-Felder */
-input,
-select,
-textarea {
-  @apply border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gehlenborg-blue;
-}
-
-/* Überschriften */
-h1,
-h2,
-h3 {
-  @apply text-gehlenborg-blue font-bold;
-}
-
-/* =========================================================
-   📱 Punkt 4: Mobile Touch-Ziele groß, Desktop kompakt
-   - Ohne Komponenten-Code zu ändern
-   - Schont absolute Mini-Buttons (z.B. 🗑️)
-========================================================= */
-
-/* 🔹 Mobil: größere Touch-Ziele & Schrift */
-@media (max-width: 768px) {
-  /* iOS-Zoom vermeiden & Touch-Fläche erhöhen */
-  input,
-  select,
-  textarea {
-    font-size: 16px !important;          /* verhindert iOS-Input-Zoom */
-    line-height: 1.2;
-    min-height: 44px;                     /* Mindest-Tap-Ziel */
-    padding-block: 0.75rem !important;    /* etwas mehr vertikal */
-  }
-
-  /* Buttons vergrößern – aber nicht die absolut positionierten Overlay-Buttons (🗑️) */
-  button:not(.absolute),
-  .btn {
-    min-height: 44px;
-    padding-block: 0.75rem !important;
-  }
-
-  /* Foto-Upload-Label (📷) als echtes 44×44-Tap-Ziel */
-  label[for^="foto-input"] {
-    width: 44px !important;
-    height: 44px !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    font-size: 20px; /* Emoji etwas größer */
-  }
-
-  /* Karten-/Sticky-Abstände etwas luftiger */
-  .sticky {
-    top: 0; /* sicherstellen, dass sticky-Header wirklich oben klebt */
-  }
-}
-
-/* 🔹 Desktop: leicht kompaktere Controls */
-@media (min-width: 768px) {
-  input,
-  select,
-  textarea {
-    padding-block: 0.5rem !important; /* dezent kompakter */
-    font-size: 0.95rem;
-  }
-  button:not(.absolute),
-  .btn {
-    padding-block: 0.5rem !important;
-  }
-}
-
-/* 🔹 Allgemeine Kleinigkeiten */
-button,
-a,
-label {
-  -webkit-tap-highlight-color: transparent; /* angenehmeres Tap-Verhalten auf Mobil */
-  touch-action: manipulation;               /* schnellere Reaktionen auf Tap */
-}
+/* optionale Hilfsklassen für Spaltenbreiten im Drag-Modus */
+.dnd-col-handle { width: 40px; min-width: 40px; }
