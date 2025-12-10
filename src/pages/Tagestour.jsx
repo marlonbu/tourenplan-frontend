@@ -10,7 +10,11 @@ import {
   useMap,
 } from "react-leaflet";
 import L from "leaflet";
-import TagestourPdfButtons from "../components/TagestourPdfButtons";
+
+// === NEW: PDF / QR ===
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import QRCode from "qrcode";
 
 // ---------- Fester Startpunkt (Firma) ----------
 const START_ADRESSE = "Hans Gehlenborg GmbH, Fehnstraße 3, 49699 Lindern";
@@ -74,27 +78,40 @@ function telHref(raw) {
   return `tel:${cleaned}`;
 }
 
-/**
- * ISO-Kalenderwoche aus YYYY-MM-DD -> "KW NN"
- */
-function isoWeekLabel(dateStr) {
+function fmtDE(d) {
   try {
-    const d = new Date(dateStr);
-    // Donnerstag der aktuellen Woche
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
-    const week1 = new Date(d.getFullYear(), 0, 4);
-    const week = 1 + Math.round(
-      ((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7
-    );
-    return `KW ${String(week).padStart(2, "0")}`;
+    return new Date(d).toLocaleDateString("de-DE");
   } catch {
-    return "";
+    return d;
+  }
+}
+
+function kwFromDateISO(iso) {
+  try {
+    const d = new Date(iso + "T00:00:00");
+    // ISO-Woche
+    const target = new Date(d.valueOf());
+    const dayNr = (d.getDay() + 6) % 7;
+    target.setDate(target.getDate() - dayNr + 3);
+    const firstThursday = new Date(target.getFullYear(), 0, 4);
+    const firstThursdayDayNr = (firstThursday.getDay() + 6) % 7;
+    firstThursday.setDate(firstThursday.getDate() - firstThursdayDayNr + 3);
+    const week =
+      1 + Math.round((target - firstThursday) / (7 * 24 * 3600 * 1000));
+    const year = target.getFullYear();
+    return { week, year };
+  } catch {
+    return null;
   }
 }
 
 /**
- * Google-Maps URL
+ * Google-Maps URL:
+ * origin   = Firma (Koordinaten)
+ * waypoints= alle Kundenstopps in Reihenfolge
+ * destination = Firma (Textadresse)
+ * --> Route: Firma -> ...Stopps... -> Firma (Rückweg)
+ * Hinweis: Das beeinflusst NICHT die OSRM/OSM-Karte.
  */
 function buildGoogleMapsRouteURL(startOrigin, stopps) {
   const addrs = (stopps || [])
@@ -114,10 +131,10 @@ function buildGoogleMapsRouteURL(startOrigin, stopps) {
   return `https://www.google.com/maps/dir/?api=1&travelmode=driving&origin=${origin}&destination=${destination}${waypoints}`;
 }
 
-// OSRM-Routenabfrage
+// OSRM-Routenabfrage (Straßenroute). Erwartet coords: [[lat, lon], ...] in Reihenfolge.
 async function fetchOsrmRoute(coords) {
   if (!coords || coords.length < 2) return null;
-  const path = coords.map(([lat, lon]) => `${lon},${lat}`).join(";");
+  const path = coords.map(([lat, lon]) => `${lon},${lat}`).join(";"); // OSRM will lon,lat
   const url = `https://router.project-osrm.org/route/v1/driving/${path}?overview=full&geometries=geojson`;
   const res = await fetch(url);
   if (!res.ok) return null;
@@ -137,19 +154,19 @@ export default function Tagestour() {
   const [tour, setTour] = useState(null);
 
   const [stopps, setStopps] = useState([]); // rohe Stopps aus API
-  const [startCoord, setStartCoord] = useState(null);
-  const [geoStopps, setGeoStopps] = useState([]);
-  const [markerCoords, setMarkerCoords] = useState([]);
-  const [routeCoords, setRouteCoords] = useState([]);
+  const [startCoord, setStartCoord] = useState(null); // Koordinate Firma
+  const [geoStopps, setGeoStopps] = useState([]); // [{ stopp, coord|null }]
+  const [markerCoords, setMarkerCoords] = useState([]); // nur vorhandene Koordinaten (Start + Stopps)
+  const [routeCoords, setRouteCoords] = useState([]); // OSRM-Linie
 
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Autosave-Status
-  const [saveState, setSaveState] = useState({});
-  const timersRef = useRef({});
+  // Autosave-Status für "Anmerkung Fahrer"
+  const [saveState, setSaveState] = useState({}); // { [id]: "saving"|"saved"|"error"|"idle" }
+  const timersRef = useRef({}); // Debounce Timer je Stopp-ID
 
-  // Fotos pro Stopp
+  // ------- Fotos pro Stopp -------
   const [fotosMap, setFotosMap] = useState({});
   const [fotoBusy, setFotoBusy] = useState({});
   const fileInputRefs = useRef({});
@@ -194,9 +211,11 @@ export default function Tagestour() {
       setStopps(s);
       setMsg(data.tour ? "✅ Tour geladen" : "ℹ️ Keine Tour gefunden");
 
+      // 1) Firma: feste Koordinaten
       const firmCoord = FIRMA_COORDS;
       setStartCoord(firmCoord);
 
+      // 2) Stopps geokodieren
       const geos = [];
       for (const st of s) {
         if (!st?.adresse) {
@@ -212,22 +231,30 @@ export default function Tagestour() {
       }
       setGeoStopps(geos);
 
+      // 3) Marker
       const mCoords = [
         ...(firmCoord ? [firmCoord] : []),
         ...geos.filter((g) => !!g.coord).map((g) => g.coord),
       ];
       setMarkerCoords(mCoords);
 
+      // 4) Route (OSRM) – KEIN Rückweg zur Firma (nur OSM-Anzeige)
       const routeInput = [firmCoord, ...geos.map((g) => g.coord).filter(Boolean)].filter(
         Boolean
       );
+
       if (routeInput.length >= 2) {
         const line = await fetchOsrmRoute(routeInput);
-        setRouteCoords(line && line.length ? line : routeInput);
+        if (line && line.length) {
+          setRouteCoords(line);
+        } else {
+          setRouteCoords(routeInput); // Fallback
+        }
       } else {
         setRouteCoords([]);
       }
 
+      // 5) Fotos je Stopp
       for (const st of s) {
         await ladeFotos(st.id);
       }
@@ -287,6 +314,7 @@ export default function Tagestour() {
     }
   }
 
+  // Eingabe-Handler für "Anmerkung Fahrer" (Autosave)
   function handleAnmerkungChange(id, value) {
     setStopps((prev) =>
       prev.map((s) => (s.id === id ? { ...s, anmerkung_fahrer: value } : s))
@@ -314,26 +342,169 @@ export default function Tagestour() {
     }
   }
 
-  // Google-Maps Button URL
+  // Google-Maps Button URL (Firma -> Stopps -> Firma/Rückweg)
   const gmapsUrl = buildGoogleMapsRouteURL(GMAPS_ORIGIN, stopps);
 
-  // Nur Stopps mit Telefonnummer für Sheet
+  // Quick-Foto trigger
+  function triggerQuickPhoto(stoppId) {
+    const el =
+      document.getElementById(`foto-input-${stoppId}`) ||
+      fileInputRefs.current[stoppId];
+    if (el) el.click();
+    setShowQuickPhoto(false);
+  }
+
   const stoppsMitTelefon = stopps.filter((s) => !!s.telefon);
 
-  // Fahrernamen der geladenen Tour (robust)
-  const tourFahrerName = tour
-    ? (fahrer.find((f) => f.id === tour.fahrer_id)?.name || "")
-    : "";
+  // === NEW: PDF Export ===
+  async function handleExportPdf() {
+    if (!tour) {
+      alert("Bitte zuerst eine Tour laden.");
+      return;
+    }
+    try {
+      // Basis
+      const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
 
-  // Daten für PDF-Komponente
-  const pdfTour = tour
-    ? {
-        datum: tour.datum,
-        fahrer_name: tourFahrerName,
-        kwLabel: isoWeekLabel(tour.datum),
-        bemerkung: tour.bemerkung || "",
-      }
-    : null;
+      // Farben/Typo
+      const blue = [0, 88, 163]; // #0058A3
+      const lightBlue = [232, 241, 250]; // #E8F1FA
+
+      // Banner oben (Titel + QR)
+      const bannerH = 86;
+      doc.setFillColor(...lightBlue);
+      doc.rect(0, 0, pageWidth, bannerH, "F");
+
+      doc.setTextColor(...blue);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(28);
+      doc.text("Tagestour – Übersicht", 46, 52);
+
+      // QR rechts im Banner + Label
+      const gmaps = gmapsUrl;
+      const qrDataUrl = await QRCode.toDataURL(gmaps, { margin: 1, width: 130 });
+      const qrW = 100;
+      const qrX = pageWidth - 46 - qrW;
+      const qrY = 12;
+      doc.addImage(qrDataUrl, "PNG", qrX, qrY, qrW, qrW);
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(60);
+      doc.text("Tour in Google Maps öffnen", qrX + qrW / 2, qrY + qrW + 14, {
+        align: "center",
+      });
+
+      // Meta unter dem Banner (einheitlicher Zeilenabstand)
+      const metaStartY = bannerH + 18;
+      const metaLine = 20;
+      const fahrerName =
+        fahrer.find((f) => f.id === tour.fahrer_id)?.name || "—";
+      const kwObj = kwFromDateISO(tour.datum);
+      const kwText = kwObj ? `KW ${String(kwObj.week).padStart(2, "0")}` : "—";
+      const bemerkung = tour.bemerkung || "—";
+
+      doc.setTextColor(0);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.text("Datum:", 46, metaStartY);
+      doc.text("Fahrer:", 46, metaStartY + metaLine);
+      doc.text("Kalenderwoche:", 46, metaStartY + metaLine * 2);
+      doc.text("Bemerkung:", 46, metaStartY + metaLine * 3);
+
+      doc.setFont("helvetica", "normal");
+      doc.text(fmtDE(tour.datum), 130, metaStartY);
+      doc.text(fahrerName, 130, metaStartY + metaLine);
+      doc.text(kwText, 130, metaStartY + metaLine * 2);
+
+      // Bemerkung ggf. umbrochen
+      const bemX = 130;
+      const bemY = metaStartY + metaLine * 3;
+      const bemMaxW = pageWidth - 46 - 46 - 84;
+      const bemWrapped = doc.splitTextToSize(bemerkung, bemMaxW);
+      doc.text(bemWrapped, bemX, bemY);
+
+      // Tabelle direkt darunter starten
+      const tableStartY = bemY + (bemWrapped.length > 1 ? 16 + (bemWrapped.length - 1) * 14 : 16);
+
+      // Tabellendaten
+      const head = [["Pos", "Ankunft", "Kunde", "Adresse", "Telefon", "Kommission", "Hinweis"]];
+      const body = (stopps || []).map((s, i) => [
+        Number.isFinite(s.position) ? String(s.position) : String(i + 1),
+        s.ankunft || "",
+        s.kunde || "",
+        s.adresse || "",
+        s.telefon || "",
+        s.kommission || "",
+        s.hinweis || "",
+      ]);
+
+      // Spaltenbreiten so, dass nichts abgeschnitten wird (A4 quer, Ränder 40 px)
+      // verfügbare Breite ~ 842 - 80 = 762 pt
+      const margin = { left: 40, right: 40, top: 40, bottom: 40 };
+      const colWidths = {
+        0: 35,  // Pos
+        1: 70,  // Ankunft
+        2: 110, // Kunde
+        3: 210, // Adresse
+        4: 95,  // Telefon
+        5: 110, // Kommission
+        6: 110, // Hinweis
+      };
+
+      autoTable(doc, {
+        head,
+        body,
+        startY: Math.max(tableStartY, bannerH + 8),
+        margin,
+        tableWidth: "auto",
+        styles: {
+          font: "helvetica",
+          fontSize: 11,               // etwas größer gewünscht
+          cellPadding: 6,
+          valign: "top",
+          overflow: "linebreak",      // Umbruch aktiv
+          lineColor: [210, 210, 210],
+          lineWidth: 0.6,
+          minCellHeight: 18,
+          textColor: [40, 40, 40],
+        },
+        headStyles: {
+          fillColor: blue,
+          textColor: 255,
+          fontStyle: "bold",
+        },
+        alternateRowStyles: {
+          fillColor: [248, 250, 252], // sehr hell
+        },
+        columnStyles: {
+          0: { cellWidth: colWidths[0], halign: "center" },
+          1: { cellWidth: colWidths[1] },
+          2: { cellWidth: colWidths[2] },
+          3: { cellWidth: colWidths[3] }, // Adresse darf umbrechen
+          4: { cellWidth: colWidths[4] },
+          5: { cellWidth: colWidths[5] }, // Kommission umbrechen
+          6: { cellWidth: colWidths[6] }, // Hinweis umbrechen
+        },
+        theme: "grid",
+        didDrawPage: (data) => {
+          // Fußzeile
+          const ts = new Date().toLocaleString("de-DE");
+          doc.setFontSize(9);
+          doc.setTextColor(120);
+          doc.text(`Erstellt am ${ts}`, 46, pageHeight - 18);
+        },
+      });
+
+      doc.save(
+        `Tagestour_${fmtDE(tour.datum)}_${fahrerName.replace(/\s+/g, "_")}.pdf`
+      );
+    } catch (e) {
+      console.error(e);
+      alert("PDF konnte nicht erstellt werden.");
+    }
+  }
 
   return (
     <div className="space-y-6 pb-24 md:pb-6">
@@ -383,20 +554,30 @@ export default function Tagestour() {
         {tour && (
           <div className="mt-4 text-sm text-gray-700 grid gap-1 sm:grid-cols-3">
             <div><b>Tour-ID:</b> {tour.id}</div>
-            <div><b>Fahrer:</b> {tourFahrerName}</div>
+            <div><b>Fahrer:</b> {fahrer.find((f) => f.id === tour.fahrer_id)?.name}</div>
             <div><b>Datum:</b> {tour.datum}</div>
           </div>
         )}
       </section>
 
-      {/* ---- Buttons: Maps + PDF (unter Tourkopf, über Karte) ---- */}
+      {/* === NEU: Buttonzeile (zentriert, zwei Buttons) === */}
       {tour && (
-        <TagestourPdfButtons
-          mapUrl={gmapsUrl}
-          tour={pdfTour}
-          stopps={stopps}
-          // logoDataUrl={null} // optional: eigenes Firmenlogo als DataURL
-        />
+        <div className="w-full flex items-center justify-center gap-3">
+          <a
+            href={gmapsUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block bg-[#0058A3] text-white px-5 py-3 rounded-md shadow hover:bg-blue-800 min-h-[44px]"
+          >
+            Tour in Google Maps öffnen
+          </a>
+          <button
+            onClick={handleExportPdf}
+            className="inline-block bg-[#0058A3] text-white px-5 py-3 rounded-md shadow hover:bg-blue-800 min-h-[44px]"
+          >
+            PDF erstellen
+          </button>
+        </div>
       )}
 
       {/* Stopps */}
