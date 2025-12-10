@@ -10,6 +10,7 @@ import {
   useMap,
 } from "react-leaflet";
 import L from "leaflet";
+import TagestourPdfButtons from "../components/TagestourPdfButtons";
 
 // ---------- Fester Startpunkt (Firma) ----------
 const START_ADRESSE = "Hans Gehlenborg GmbH, Fehnstraße 3, 49699 Lindern";
@@ -74,36 +75,49 @@ function telHref(raw) {
 }
 
 /**
- * Google-Maps URL:
- * origin   = Firma (Koordinaten)
- * waypoints= alle Kundenstopps in Reihenfolge
- * destination = Firma (Textadresse)
- * --> Route: Firma -> ...Stopps... -> Firma (Rückweg)
- * Hinweis: Das beeinflusst NICHT die OSRM/OSM-Karte.
+ * ISO-Kalenderwoche aus YYYY-MM-DD -> "KW NN"
+ */
+function isoWeekLabel(dateStr) {
+  try {
+    const d = new Date(dateStr);
+    // Donnerstag der aktuellen Woche
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+    const week1 = new Date(d.getFullYear(), 0, 4);
+    const week = 1 + Math.round(
+      ((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7
+    );
+    return `KW ${String(week).padStart(2, "0")}`;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Google-Maps URL
  */
 function buildGoogleMapsRouteURL(startOrigin, stopps) {
   const addrs = (stopps || [])
     .map((s) => s?.adresse)
     .filter(Boolean);
 
-  // keine Stopps -> nur Firma anzeigen
   if (addrs.length === 0) {
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
       startOrigin
     )}`;
   }
 
-  const origin = encodeURIComponent(startOrigin);           // Koordinaten der Firma
-  const destination = encodeURIComponent(START_ADRESSE);    // Firma als Textadresse (Rückweg)
+  const origin = encodeURIComponent(startOrigin);
+  const destination = encodeURIComponent(START_ADRESSE);
   const waypoints = `&waypoints=${encodeURIComponent(addrs.join("|"))}`;
 
   return `https://www.google.com/maps/dir/?api=1&travelmode=driving&origin=${origin}&destination=${destination}${waypoints}`;
 }
 
-// OSRM-Routenabfrage (Straßenroute). Erwartet coords: [[lat, lon], ...] in Reihenfolge.
+// OSRM-Routenabfrage
 async function fetchOsrmRoute(coords) {
   if (!coords || coords.length < 2) return null;
-  const path = coords.map(([lat, lon]) => `${lon},${lat}`).join(";"); // OSRM will lon,lat
+  const path = coords.map(([lat, lon]) => `${lon},${lat}`).join(";");
   const url = `https://router.project-osrm.org/route/v1/driving/${path}?overview=full&geometries=geojson`;
   const res = await fetch(url);
   if (!res.ok) return null;
@@ -123,28 +137,24 @@ export default function Tagestour() {
   const [tour, setTour] = useState(null);
 
   const [stopps, setStopps] = useState([]); // rohe Stopps aus API
-  const [startCoord, setStartCoord] = useState(null); // Koordinate Firma
-  const [geoStopps, setGeoStopps] = useState([]); // [{ stopp, coord|null }]
-  const [markerCoords, setMarkerCoords] = useState([]); // nur vorhandene Koordinaten (Start + Stopps)
-  const [routeCoords, setRouteCoords] = useState([]); // OSRM-Linie
+  const [startCoord, setStartCoord] = useState(null);
+  const [geoStopps, setGeoStopps] = useState([]);
+  const [markerCoords, setMarkerCoords] = useState([]);
+  const [routeCoords, setRouteCoords] = useState([]);
 
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Autosave-Status für "Anmerkung Fahrer"
-  const [saveState, setSaveState] = useState({}); // { [id]: "saving"|"saved"|"error"|"idle" }
-  const timersRef = useRef({}); // Debounce Timer je Stopp-ID
+  // Autosave-Status
+  const [saveState, setSaveState] = useState({});
+  const timersRef = useRef({});
 
-  // ------- Fotos pro Stopp -------
-  // fotosMap: { [stoppId]: [{id, url, created_at}] }
+  // Fotos pro Stopp
   const [fotosMap, setFotosMap] = useState({});
-  // busy: { [stoppId]: boolean } während Upload/Laden
   const [fotoBusy, setFotoBusy] = useState({});
+  const fileInputRefs = useRef({});
 
-  // Refs für die versteckten Datei-Inputs (für Schnell-Foto)
-  const fileInputRefs = useRef({}); // { [stoppId]: HTMLInputElement }
-
-  // Bottom-Action-Bar: Modals/Sheets
+  // Bottom-Action-Bar
   const [showQuickPhoto, setShowQuickPhoto] = useState(false);
   const [showCallSheet, setShowCallSheet] = useState(false);
 
@@ -184,11 +194,9 @@ export default function Tagestour() {
       setStopps(s);
       setMsg(data.tour ? "✅ Tour geladen" : "ℹ️ Keine Tour gefunden");
 
-      // 1) Firma: feste Koordinaten verwenden
       const firmCoord = FIRMA_COORDS;
       setStartCoord(firmCoord);
 
-      // 2) Stopps geokodieren (einzeln; Reihenfolge bleibt)
       const geos = [];
       for (const st of s) {
         if (!st?.adresse) {
@@ -204,30 +212,22 @@ export default function Tagestour() {
       }
       setGeoStopps(geos);
 
-      // 3) Marker
       const mCoords = [
         ...(firmCoord ? [firmCoord] : []),
         ...geos.filter((g) => !!g.coord).map((g) => g.coord),
       ];
       setMarkerCoords(mCoords);
 
-      // 4) Route (OSRM) – KEIN Rückweg zur Firma (nur OSM-Anzeige)
       const routeInput = [firmCoord, ...geos.map((g) => g.coord).filter(Boolean)].filter(
         Boolean
       );
-
       if (routeInput.length >= 2) {
         const line = await fetchOsrmRoute(routeInput);
-        if (line && line.length) {
-          setRouteCoords(line);
-        } else {
-          setRouteCoords(routeInput); // Fallback
-        }
+        setRouteCoords(line && line.length ? line : routeInput);
       } else {
         setRouteCoords([]);
       }
 
-      // 5) Fotos je Stopp (nacheinander)
       for (const st of s) {
         await ladeFotos(st.id);
       }
@@ -258,8 +258,8 @@ export default function Tagestour() {
     try {
       setFotoBusy((b) => ({ ...b, [stoppId]: true }));
       await api.uploadStoppFoto(stoppId, file);
-      fileInput.value = ""; // Input zurücksetzen
-      await ladeFotos(stoppId); // neu laden
+      fileInput.value = "";
+      await ladeFotos(stoppId);
     } catch (e) {
       console.error(e);
       alert(e?.message || "Foto-Upload fehlgeschlagen");
@@ -287,7 +287,6 @@ export default function Tagestour() {
     }
   }
 
-  // Eingabe-Handler für "Anmerkung Fahrer" (Autosave)
   function handleAnmerkungChange(id, value) {
     setStopps((prev) =>
       prev.map((s) => (s.id === id ? { ...s, anmerkung_fahrer: value } : s))
@@ -315,24 +314,26 @@ export default function Tagestour() {
     }
   }
 
-  // Google-Maps Button URL (Firma -> Stopps -> Firma/Rückweg)
+  // Google-Maps Button URL
   const gmapsUrl = buildGoogleMapsRouteURL(GMAPS_ORIGIN, stopps);
-
-  // Quick-Foto: ausgewählten Stopp anklicken -> zugehörigen versteckten Input triggern
-  function triggerQuickPhoto(stoppId) {
-    const el =
-      document.getElementById(`foto-input-${stoppId}`) ||
-      fileInputRefs.current[stoppId];
-    if (el) {
-      el.click();
-    } else {
-      alert("Kein Uploadfeld gefunden.");
-    }
-    setShowQuickPhoto(false);
-  }
 
   // Nur Stopps mit Telefonnummer für Sheet
   const stoppsMitTelefon = stopps.filter((s) => !!s.telefon);
+
+  // Fahrernamen der geladenen Tour (robust)
+  const tourFahrerName = tour
+    ? (fahrer.find((f) => f.id === tour.fahrer_id)?.name || "")
+    : "";
+
+  // Daten für PDF-Komponente
+  const pdfTour = tour
+    ? {
+        datum: tour.datum,
+        fahrer_name: tourFahrerName,
+        kwLabel: isoWeekLabel(tour.datum),
+        bemerkung: tour.bemerkung || "",
+      }
+    : null;
 
   return (
     <div className="space-y-6 pb-24 md:pb-6">
@@ -382,11 +383,21 @@ export default function Tagestour() {
         {tour && (
           <div className="mt-4 text-sm text-gray-700 grid gap-1 sm:grid-cols-3">
             <div><b>Tour-ID:</b> {tour.id}</div>
-            <div><b>Fahrer:</b> {fahrer.find((f) => f.id === tour.fahrer_id)?.name}</div>
+            <div><b>Fahrer:</b> {tourFahrerName}</div>
             <div><b>Datum:</b> {tour.datum}</div>
           </div>
         )}
       </section>
+
+      {/* ---- Buttons: Maps + PDF (unter Tourkopf, über Karte) ---- */}
+      {tour && (
+        <TagestourPdfButtons
+          mapUrl={gmapsUrl}
+          tour={pdfTour}
+          stopps={stopps}
+          // logoDataUrl={null} // optional: eigenes Firmenlogo als DataURL
+        />
+      )}
 
       {/* Stopps */}
       {tour && (
@@ -677,18 +688,6 @@ export default function Tagestour() {
               </table>
             </div>
           </section>
-
-          {/* Google Maps Button (zentral) */}
-          <div className="w-full flex items-center justify-center">
-            <a
-              href={gmapsUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-block bg-[#0058A3] text-white px-5 py-3 rounded-md shadow hover:bg-blue-800 min-h-[44px]"
-            >
-              Tour in Google Maps öffnen
-            </a>
-          </div>
 
           {/* Karte */}
           <section className="bg-white p-4 rounded-lg shadow space-y-4">
