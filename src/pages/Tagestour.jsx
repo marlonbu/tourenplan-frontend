@@ -86,19 +86,20 @@ function fmtDE(d) {
   }
 }
 
-function kwFromDateISO(iso) {
+// Robust gegen "YYYY-MM-DD" und komplette ISO-Strings
+function kwFromDateISO(input) {
   try {
-    const d = new Date(iso + "T00:00:00");
-    // ISO-Woche
-    const target = new Date(d.valueOf());
-    const dayNr = (d.getDay() + 6) % 7;
-    target.setDate(target.getDate() - dayNr + 3);
-    const firstThursday = new Date(target.getFullYear(), 0, 4);
-    const firstThursdayDayNr = (firstThursday.getDay() + 6) % 7;
-    firstThursday.setDate(firstThursday.getDate() - firstThursdayDayNr + 3);
-    const week =
-      1 + Math.round((target - firstThursday) / (7 * 24 * 3600 * 1000));
-    const year = target.getFullYear();
+    const d0 = new Date(input);
+    if (isNaN(d0)) return null;
+    // ISO-Woche nach DIN: Montag = Wochenanfang
+    const d = new Date(Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth(), d0.getUTCDate()));
+    const dayNum = (d.getUTCDay() + 6) % 7; // Mo=0..So=6
+    d.setUTCDate(d.getUTCDate() - dayNum + 3); // auf Donnerstag der Woche
+    const firstThu = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+    const firstThuDay = (firstThu.getUTCDay() + 6) % 7;
+    firstThu.setUTCDate(firstThu.getUTCDate() - firstThuDay + 3);
+    const week = 1 + Math.round((d - firstThu) / (7 * 24 * 3600 * 1000));
+    const year = d.getUTCFullYear();
     return { week, year };
   } catch {
     return null;
@@ -396,7 +397,7 @@ export default function Tagestour() {
         align: "center",
       });
 
-      // Meta unter dem Banner (einheitlicher Zeilenabstand)
+      // Meta unter dem Banner (einheitlicher Zeilenabstand) – dynamische Spalten
       const metaStartY = bannerH + 18;
       const metaLine = 20;
       const fahrerName =
@@ -405,28 +406,34 @@ export default function Tagestour() {
       const kwText = kwObj ? `KW ${String(kwObj.week).padStart(2, "0")}` : "—";
       const bemerkung = tour.bemerkung || "—";
 
+      // Labels & dynamischer Wert-X anhand längstem Label
+      const labels = ["Datum:", "Fahrer:", "Kalenderwoche:", "Bemerkung:"];
       doc.setTextColor(0);
       doc.setFont("helvetica", "bold");
       doc.setFontSize(14);
-      doc.text("Datum:", 46, metaStartY);
-      doc.text("Fahrer:", 46, metaStartY + metaLine);
-      doc.text("Kalenderwoche:", 46, metaStartY + metaLine * 2);
-      doc.text("Bemerkung:", 46, metaStartY + metaLine * 3);
+      const labelX = 46;
+      const labelWidths = labels.map((t) => doc.getTextWidth(t));
+      const maxLabelW = Math.max(...labelWidths);
+      const valueX = labelX + maxLabelW + 14; // 14pt Abstand
 
+      // Labels zeichnen
+      labels.forEach((t, i) => doc.text(t, labelX, metaStartY + metaLine * i));
+
+      // Werte zeichnen
       doc.setFont("helvetica", "normal");
-      doc.text(fmtDE(tour.datum), 130, metaStartY);
-      doc.text(fahrerName, 130, metaStartY + metaLine);
-      doc.text(kwText, 130, metaStartY + metaLine * 2);
+      doc.text(fmtDE(tour.datum), valueX, metaStartY);
+      doc.text(fahrerName, valueX, metaStartY + metaLine);
+      doc.text(kwText, valueX, metaStartY + metaLine * 2);
 
       // Bemerkung ggf. umbrochen
-      const bemX = 130;
       const bemY = metaStartY + metaLine * 3;
-      const bemMaxW = pageWidth - 46 - 46 - 84;
-      const bemWrapped = doc.splitTextToSize(bemerkung, bemMaxW);
-      doc.text(bemWrapped, bemX, bemY);
+      const bemMaxW = pageWidth - valueX - 46;
+      const bemWrapped = doc.splitTextToSize(bemerkung, Math.max(120, bemMaxW));
+      doc.text(bemWrapped, valueX, bemY);
 
       // Tabelle direkt darunter starten
-      const tableStartY = bemY + (bemWrapped.length > 1 ? 16 + (bemWrapped.length - 1) * 14 : 16);
+      const tableStartY =
+        bemY + (bemWrapped.length > 1 ? 16 + (bemWrapped.length - 1) * 14 : 16);
 
       // Tabellendaten
       const head = [["Pos", "Ankunft", "Kunde", "Adresse", "Telefon", "Kommission", "Hinweis"]];
@@ -440,8 +447,7 @@ export default function Tagestour() {
         s.hinweis || "",
       ]);
 
-      // Spaltenbreiten so, dass nichts abgeschnitten wird (A4 quer, Ränder 40 px)
-      // verfügbare Breite ~ 842 - 80 = 762 pt
+      // Spaltenbreiten (A4 quer, Ränder 40 px)
       const margin = { left: 40, right: 40, top: 40, bottom: 40 };
       const colWidths = {
         0: 35,  // Pos
@@ -461,10 +467,10 @@ export default function Tagestour() {
         tableWidth: "auto",
         styles: {
           font: "helvetica",
-          fontSize: 11,               // etwas größer gewünscht
+          fontSize: 11,
           cellPadding: 6,
           valign: "top",
-          overflow: "linebreak",      // Umbruch aktiv
+          overflow: "linebreak",
           lineColor: [210, 210, 210],
           lineWidth: 0.6,
           minCellHeight: 18,
@@ -476,19 +482,19 @@ export default function Tagestour() {
           fontStyle: "bold",
         },
         alternateRowStyles: {
-          fillColor: [248, 250, 252], // sehr hell
+          fillColor: [248, 250, 252],
         },
         columnStyles: {
           0: { cellWidth: colWidths[0], halign: "center" },
           1: { cellWidth: colWidths[1] },
           2: { cellWidth: colWidths[2] },
-          3: { cellWidth: colWidths[3] }, // Adresse darf umbrechen
+          3: { cellWidth: colWidths[3] },
           4: { cellWidth: colWidths[4] },
-          5: { cellWidth: colWidths[5] }, // Kommission umbrechen
-          6: { cellWidth: colWidths[6] }, // Hinweis umbrechen
+          5: { cellWidth: colWidths[5] },
+          6: { cellWidth: colWidths[6] },
         },
         theme: "grid",
-        didDrawPage: (data) => {
+        didDrawPage: () => {
           // Fußzeile
           const ts = new Date().toLocaleString("de-DE");
           doc.setFontSize(9);
@@ -498,7 +504,7 @@ export default function Tagestour() {
       });
 
       doc.save(
-        `Tagestour_${fmtDE(tour.datum)}_${fahrerName.replace(/\s+/g, "_")}.pdf`
+        `Tagestour_${fmtDE(tour.datum)}_${(fahrerName || "").replace(/\s+/g, "_")}.pdf`
       );
     } catch (e) {
       console.error(e);
