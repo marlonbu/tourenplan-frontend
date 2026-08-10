@@ -17,7 +17,33 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical } from "lucide-react";
+import {
+  AlertCircle,
+  CalendarDays,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Clock3,
+  Filter,
+  GripVertical,
+  Info,
+  ListOrdered,
+  Loader2,
+  MapPin,
+  MessageSquareText,
+  Package,
+  Phone,
+  RotateCcw,
+  Search,
+  SlidersHorizontal,
+  Truck,
+  UserRound,
+  X,
+} from "lucide-react";
+
+function hasOwn(object, key) {
+  return Object.prototype.hasOwnProperty.call(object, key);
+}
 
 function telHref(raw) {
   if (!raw) return "";
@@ -25,45 +51,205 @@ function telHref(raw) {
   return `tel:${cleaned}`;
 }
 
-function fmtDate(d) {
-  try {
-    return new Date(d).toLocaleDateString("de-DE");
-  } catch {
-    return d;
+function toDateISO(raw) {
+  const direct = String(raw || "").slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(direct)) return direct;
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getTodayISO() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function fmtDate(raw) {
+  const iso = toDateISO(raw);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!match) return raw || "–";
+  return `${match[3]}.${match[2]}.${match[1]}`;
+}
+
+function getStatusKey(rawDate, todayISO) {
+  const dateISO = toDateISO(rawDate);
+  if (!dateISO) return "unbekannt";
+  if (dateISO > todayISO) return "zukuenftig";
+  if (dateISO < todayISO) return "vergangen";
+  return "heute";
+}
+
+function getErrorMessage(error, fallbackMessage) {
+  if (error?.code === "NETWORK_ERROR") {
+    return "Der Server ist momentan nicht erreichbar. Bitte prüfen Sie die Internetverbindung und versuchen Sie es erneut.";
   }
+
+  if (error?.code === "TIMEOUT") {
+    return "Der Server hat zu lange nicht geantwortet. Bitte versuchen Sie es erneut.";
+  }
+
+  if (error?.code === "SESSION_EXPIRED") {
+    return "Ihre Sitzung ist abgelaufen. Bitte melden Sie sich erneut an.";
+  }
+
+  return error?.message || fallbackMessage;
+}
+
+function formatPosition(value) {
+  if (value === null || value === undefined || value === "") return "–";
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : value;
 }
 
 function StatusBadge({ dateISO, todayISO }) {
-  if (String(dateISO) > todayISO)
-    return <span className="text-xs rounded px-2 py-1 bg-[#E8F8EE] text-[#137A4B]">Zukünftig</span>;
-  if (String(dateISO) < todayISO)
-    return <span className="text-xs rounded px-2 py-1 bg-[#FCE8E8] text-[#9F1C1C]">Vergangen</span>;
-  return <span className="text-xs rounded px-2 py-1 bg-[#E8F1FA] text-[#0058A3]">Heute</span>;
+  const status = getStatusKey(dateISO, todayISO);
+
+  if (status === "zukuenftig") {
+    return (
+      <span className="inline-flex items-center rounded-full bg-[#E8F8EE] px-2.5 py-1 text-xs font-semibold text-[#137A4B]">
+        Zukünftig
+      </span>
+    );
+  }
+
+  if (status === "vergangen") {
+    return (
+      <span className="inline-flex items-center rounded-full bg-[#FCE8E8] px-2.5 py-1 text-xs font-semibold text-[#9F1C1C]">
+        Vergangen
+      </span>
+    );
+  }
+
+  if (status === "heute") {
+    return (
+      <span className="inline-flex items-center rounded-full bg-[#E8F1FA] px-2.5 py-1 text-xs font-semibold text-[#0058A3]">
+        Heute
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-600">
+      Unbekannt
+    </span>
+  );
 }
 
-// ---- Sortable Item (Desktop - Tabellenzeile)
-function SortableRow({ children, id }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+function InlineNotice({ notice, onClose }) {
+  if (!notice) return null;
+
+  const variants = {
+    success: {
+      wrapper: "border-green-200 bg-green-50 text-green-800",
+      icon: CheckCircle2,
+    },
+    error: {
+      wrapper: "border-red-200 bg-red-50 text-red-800",
+      icon: AlertCircle,
+    },
+    info: {
+      wrapper: "border-blue-200 bg-blue-50 text-blue-800",
+      icon: Info,
+    },
+  };
+
+  const current = variants[notice.type] || variants.info;
+  const Icon = current.icon;
+
+  return (
+    <div
+      className={`rounded-xl border px-4 py-3 ${current.wrapper}`}
+      role={notice.type === "error" ? "alert" : "status"}
+      aria-live="polite"
+    >
+      <div className="flex items-start gap-3">
+        <Icon className="mt-0.5 shrink-0" size={18} aria-hidden="true" />
+        <div className="min-w-0 flex-1 text-sm leading-5">{notice.text}</div>
+        {onClose ? (
+          <button
+            type="button"
+            onClick={onClose}
+            className="-mr-1 -mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-current opacity-70 hover:bg-black/5 hover:opacity-100"
+            aria-label="Hinweis schließen"
+            title="Hinweis schließen"
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function FilterField({ id, label, children, help = "" }) {
+  return (
+    <div>
+      <label htmlFor={id} className="mb-1.5 block text-sm font-semibold text-gray-700">
+        {label}
+      </label>
+      {children}
+      {help ? <div className="mt-1.5 text-xs leading-4 text-gray-500">{help}</div> : null}
+    </div>
+  );
+}
+
+function FilterChip({ children, onRemove }) {
+  return (
+    <span className="relative inline-flex items-center rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-9 text-xs font-semibold text-blue-800">
+      {children}
+      <button
+        type="button"
+        onClick={onRemove}
+        className="absolute right-1.5 top-1/2 inline-flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full hover:bg-blue-100"
+        aria-label={`${children} entfernen`}
+        title="Filter entfernen"
+      >
+        <X size={13} aria-hidden="true" />
+      </button>
+    </span>
+  );
+}
+
+function SortableRow({ children, id, disabled = false }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    disabled,
+  });
+
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
+    position: "relative",
+    zIndex: isDragging ? 20 : "auto",
   };
+
   return (
     <tr
       ref={setNodeRef}
       style={style}
-      className={`hover:bg-gray-50 ${isDragging ? "opacity-75 ring-2 ring-[#0058A3]" : ""}`}
+      className={`bg-white hover:bg-gray-50 ${
+        isDragging ? "opacity-80 ring-2 ring-inset ring-[#0058A3]" : ""
+      }`}
     >
-      {/* Grip-Handle */}
-      <td className="border px-2 py-1 w-[40px] text-gray-500 dnd-col-handle">
+      <td className="dnd-col-handle w-[48px] border-b border-gray-200 px-2 py-3 text-center text-gray-400">
         <button
+          type="button"
           {...attributes}
           {...listeners}
-          className="cursor-grab active:cursor-grabbing inline-flex items-center"
-          aria-label="Reihenfolge ändern"
-          title="Ziehen zum Sortieren"
+          disabled={disabled}
+          className="inline-flex h-9 w-9 cursor-grab items-center justify-center rounded-lg hover:bg-gray-100 hover:text-[#0058A3] active:cursor-grabbing disabled:cursor-not-allowed"
+          aria-label="Tour verschieben"
+          title="Ziehen, um die Reihenfolge zu ändern"
         >
-          <GripVertical size={16} />
+          <GripVertical size={18} aria-hidden="true" />
         </button>
       </td>
       {children}
@@ -71,152 +257,480 @@ function SortableRow({ children, id }) {
   );
 }
 
-// ---- Sortable Item (Mobile - Card)
-function SortableCard({ id, children }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+function SortableCard({ id, children, disabled = false }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    disabled,
+  });
+
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
+    position: "relative",
+    zIndex: isDragging ? 20 : "auto",
   };
+
   return (
-    <div
+    <article
       ref={setNodeRef}
       style={style}
-      className={`bg-white border rounded-lg shadow-sm p-4 ${isDragging ? "opacity-75 ring-2 ring-[#0058A3]" : ""}`}
+      className={`rounded-2xl border bg-white p-4 shadow-sm ${
+        isDragging ? "border-[#0058A3] opacity-85 ring-2 ring-[#0058A3]/30" : "border-gray-200"
+      }`}
     >
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-gray-400">
-          <button
-            {...attributes}
-            {...listeners}
-            className="cursor-grab active:cursor-grabbing inline-flex items-center"
-            aria-label="Reihenfolge ändern"
-            title="Ziehen zum Sortieren"
-          >
-            <GripVertical />
-          </button>
-        </div>
-        <div className="flex-1">{children.header}</div>
-        <div className="shrink-0">{children.status}</div>
+      <div className="flex items-start gap-3">
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          disabled={disabled}
+          className="inline-flex h-10 w-10 shrink-0 cursor-grab items-center justify-center rounded-xl bg-gray-100 text-gray-500 hover:bg-[#E8F1FA] hover:text-[#0058A3] active:cursor-grabbing disabled:cursor-not-allowed"
+          aria-label="Tour verschieben"
+          title="Ziehen, um die Reihenfolge zu ändern"
+        >
+          <GripVertical size={20} aria-hidden="true" />
+        </button>
+        <div className="min-w-0 flex-1">{children}</div>
       </div>
-      <div className="mt-3">{children.body}</div>
+    </article>
+  );
+}
+
+function MobileStopCard({ stopp, index }) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+            Stopp {index + 1} · Position {formatPosition(stopp.position)}
+          </div>
+          <div className="mt-1 break-words text-sm font-semibold text-[#0058A3]">
+            {stopp.kunde || "Ohne Kundenname"}
+          </div>
+        </div>
+        {stopp.ankunft ? (
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-[#E8F1FA] px-2.5 py-1 text-xs font-semibold text-[#0058A3]">
+            <Clock3 size={13} aria-hidden="true" />
+            {stopp.ankunft}
+          </span>
+        ) : null}
+      </div>
+
+      <div className="mt-3 space-y-2.5 text-sm">
+        <div className="flex items-start gap-2.5">
+          <MapPin className="mt-0.5 shrink-0 text-[#0058A3]" size={17} aria-hidden="true" />
+          {stopp.adresse ? (
+            <a
+              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                stopp.adresse
+              )}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="break-words font-medium text-blue-700 hover:underline"
+            >
+              {stopp.adresse}
+            </a>
+          ) : (
+            <span className="text-gray-500">Keine Adresse</span>
+          )}
+        </div>
+
+        <div className="flex items-start gap-2.5">
+          <Phone className="mt-0.5 shrink-0 text-[#0058A3]" size={17} aria-hidden="true" />
+          {stopp.telefon ? (
+            <a className="font-medium text-blue-700 hover:underline" href={telHref(stopp.telefon)}>
+              {stopp.telefon}
+            </a>
+          ) : (
+            <span className="text-gray-500">Keine Telefonnummer</span>
+          )}
+        </div>
+
+        <div className="flex items-start gap-2.5">
+          <Package className="mt-0.5 shrink-0 text-[#0058A3]" size={17} aria-hidden="true" />
+          <span className="break-words">
+            {stopp.kommission || <span className="text-gray-500">Keine Kommission</span>}
+          </span>
+        </div>
+
+        <div className="flex items-start gap-2.5">
+          <MessageSquareText
+            className="mt-0.5 shrink-0 text-[#0058A3]"
+            size={17}
+            aria-hidden="true"
+          />
+          <span className="break-words">
+            {stopp.hinweis || <span className="text-gray-500">Kein Hinweis</span>}
+          </span>
+        </div>
+      </div>
     </div>
   );
+}
+
+function StoppsTable({ stopps }) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      <table className="min-w-[980px] w-full border-collapse text-sm">
+        <thead className="bg-gray-100 text-gray-700">
+          <tr>
+            <th className="border-b border-gray-200 px-3 py-2.5 text-left">Pos.</th>
+            <th className="border-b border-gray-200 px-3 py-2.5 text-left">Kunde</th>
+            <th className="border-b border-gray-200 px-3 py-2.5 text-left">Adresse</th>
+            <th className="border-b border-gray-200 px-3 py-2.5 text-left">Telefon</th>
+            <th className="border-b border-gray-200 px-3 py-2.5 text-left">Kommission</th>
+            <th className="border-b border-gray-200 px-3 py-2.5 text-left">Hinweis</th>
+            <th className="border-b border-gray-200 px-3 py-2.5 text-left">Ankunft</th>
+          </tr>
+        </thead>
+        <tbody>
+          {stopps.length === 0 ? (
+            <tr>
+              <td colSpan={7} className="px-4 py-6 text-center text-sm text-gray-500">
+                Keine Stopps vorhanden
+              </td>
+            </tr>
+          ) : (
+            stopps.map((stopp) => (
+              <tr key={stopp.id} className="hover:bg-gray-50">
+                <td className="border-b border-gray-100 px-3 py-2.5 text-center font-semibold text-gray-700">
+                  {formatPosition(stopp.position)}
+                </td>
+                <td className="border-b border-gray-100 px-3 py-2.5 font-medium text-gray-900">
+                  {stopp.kunde || "–"}
+                </td>
+                <td className="max-w-[280px] border-b border-gray-100 px-3 py-2.5">
+                  {stopp.adresse ? (
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                        stopp.adresse
+                      )}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="break-words text-blue-700 hover:underline"
+                    >
+                      {stopp.adresse}
+                    </a>
+                  ) : (
+                    <span className="text-gray-400">–</span>
+                  )}
+                </td>
+                <td className="border-b border-gray-100 px-3 py-2.5">
+                  {stopp.telefon ? (
+                    <a className="text-blue-700 hover:underline" href={telHref(stopp.telefon)}>
+                      {stopp.telefon}
+                    </a>
+                  ) : (
+                    <span className="text-gray-400">–</span>
+                  )}
+                </td>
+                <td className="max-w-[240px] break-words border-b border-gray-100 px-3 py-2.5">
+                  {stopp.kommission || <span className="text-gray-400">–</span>}
+                </td>
+                <td className="max-w-[280px] break-words border-b border-gray-100 px-3 py-2.5">
+                  {stopp.hinweis || <span className="text-gray-400">–</span>}
+                </td>
+                <td className="whitespace-nowrap border-b border-gray-100 px-3 py-2.5">
+                  {stopp.ankunft || <span className="text-gray-400">–</span>}
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function reorderVisibleIds(previousOrder, visibleIds, reorderedVisibleIds) {
+  const visibleSet = new Set(visibleIds);
+  const slots = [];
+
+  previousOrder.forEach((id, index) => {
+    if (visibleSet.has(id)) slots.push(index);
+  });
+
+  const nextOrder = [...previousOrder];
+  reorderedVisibleIds.forEach((id, index) => {
+    if (slots[index] !== undefined) nextOrder[slots[index]] = id;
+  });
+
+  return nextOrder;
 }
 
 export default function Uebersicht() {
   // Filter
   const [fahrer, setFahrer] = useState([]);
-  const [filterFahrer, setFilterFahrer] = useState(""); // "" = alle
+  const [filterFahrer, setFilterFahrer] = useState("");
   const [filterVon, setFilterVon] = useState("");
   const [filterBis, setFilterBis] = useState("");
   const [filterKw, setFilterKw] = useState("");
   const [filterKunde, setFilterKunde] = useState("");
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [appliedFilters, setAppliedFilters] = useState({
+    fahrer: "",
+    von: "",
+    bis: "",
+    kw: "",
+    kunde: "",
+  });
 
   // Daten
   const [touren, setTouren] = useState([]);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
+  const [loadError, setLoadError] = useState(false);
+  const [actionNotice, setActionNotice] = useState(null);
 
-  // Mobile: Stopps-Accordion je Tour
-  const [openStops, setOpenStops] = useState({}); // { [tourId]: true|Stopps[] }
+  // Stopps je Tour
+  const [openStops, setOpenStops] = useState({});
+  const [loadingStops, setLoadingStops] = useState({});
 
-  // Tab-Ansicht: alle | zukünftig | vergangen
+  // Tab-Ansicht: alle | zukuenftig | vergangen
   const [tab, setTab] = useState("alle");
 
-  // Drag&Drop State
-  const [ordered, setOrdered] = useState([]); // aktuell sichtbare, geordnete Liste (ids)
+  // Drag-and-drop
+  const [ordered, setOrdered] = useState([]);
   const [activeId, setActiveId] = useState(null);
-  const isDraggingTable = activeId != null; // <<< wichtig für Table-DND-Fix
+  const [reorderSaving, setReorderSaving] = useState(false);
+  const isDraggingTable = activeId !== null;
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 120, tolerance: 6 } })
   );
 
+  const todayISO = getTodayISO();
+
   useEffect(() => {
-    ladeFahrer();
-    ladeTouren();
+    void ladeFahrer();
+    void ladeTouren();
   }, []);
 
   async function ladeFahrer() {
     try {
       const data = await api.listFahrer();
-      setFahrer(data);
-    } catch (e) {
-      console.error("Fahrer laden fehlgeschlagen:", e);
+      setFahrer(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error("Fahrer laden fehlgeschlagen:", error);
+      setActionNotice({
+        type: "error",
+        text: getErrorMessage(error, "Die Fahrer konnten nicht geladen werden."),
+      });
     }
   }
 
-  async function ladeTouren() {
+  function currentFilterValues() {
+    return {
+      fahrer: filterFahrer,
+      von: filterVon,
+      bis: filterBis,
+      kw: filterKw,
+      kunde: filterKunde.trim(),
+    };
+  }
+
+  function writeFilterValues(filters) {
+    setFilterFahrer(filters.fahrer || "");
+    setFilterVon(filters.von || "");
+    setFilterBis(filters.bis || "");
+    setFilterKw(filters.kw || "");
+    setFilterKunde(filters.kunde || "");
+  }
+
+  async function ladeTouren(filters = null, { clearExpanded = false } = {}) {
+    const sourceValues = filters || currentFilterValues();
+    const values = {
+      fahrer: sourceValues.fahrer || "",
+      von: sourceValues.von || "",
+      bis: sourceValues.bis || "",
+      kw: sourceValues.kw || "",
+      kunde: String(sourceValues.kunde || "").trim(),
+    };
+
     try {
       setLoading(true);
       setMsg("");
+      setLoadError(false);
+
+      if (clearExpanded) setOpenStops({});
+
       const payload = {
-        fahrer_id: filterFahrer || undefined,
-        date_from: filterVon || undefined,
-        date_to: filterBis || undefined,
-        kw: filterKw || undefined,
-        kunde: filterKunde || undefined,
+        fahrer_id: values.fahrer || undefined,
+        date_from: values.von || undefined,
+        date_to: values.bis || undefined,
+        kw: values.kw || undefined,
+        kunde: values.kunde || undefined,
       };
+
       const data = await api.getTourenAdmin(payload);
-      setTouren(data || []);
-      setOrdered((data || []).map((t) => t.id));
-      if (!data || data.length === 0) setMsg("Keine Touren gefunden.");
-    } catch (err) {
-      console.error(err);
-      setMsg("❌ Fehler beim Laden der Touren");
+      const rows = Array.isArray(data) ? data : [];
+
+      setAppliedFilters(values);
+      setTouren(rows);
+      setOrdered(rows.map((tour) => tour.id));
+
+      if (rows.length === 0) setMsg("Keine Touren gefunden.");
+    } catch (error) {
+      console.error("Touren laden fehlgeschlagen:", error);
+      setLoadError(true);
+      setMsg(getErrorMessage(error, "Die Touren konnten nicht geladen werden."));
     } finally {
       setLoading(false);
     }
   }
 
-  function resetFilter() {
-    setFilterFahrer("");
-    setFilterVon("");
-    setFilterBis("");
-    setFilterKw("");
-    setFilterKunde("");
-    setTouren([]);
-    setOpenStops({});
-    setMsg("");
-    setOrdered([]);
-  }
+  async function handleFilterSubmit(event) {
+    event.preventDefault();
 
-  // Clientseitige Tab-Filterung
-  const todayISO = new Date().toISOString().slice(0, 10);
-  const gefiltert = useMemo(() => {
-    let arr = touren;
-    if (!arr?.length) return [];
-    if (tab === "zukuenftig") arr = arr.filter((t) => String(t.datum) > todayISO);
-    else if (tab === "vergangen") arr = arr.filter((t) => String(t.datum) < todayISO);
-    const setVisible = new Set(arr.map((t) => t.id));
-    const idsInOrder = ordered.filter((id) => setVisible.has(id));
-    const mapById = new Map(arr.map((t) => [t.id, t]));
-    return idsInOrder.map((id) => mapById.get(id)).filter(Boolean);
-  }, [touren, tab, todayISO, ordered]);
-
-  // Stopps lazy laden
-  async function toggleStopps(tour) {
-    const id = tour.id;
-    if (openStops[id]) {
-      setOpenStops((m) => {
-        const c = { ...m };
-        delete c[id];
-        return c;
+    if (filterVon && filterBis && filterVon > filterBis) {
+      setActionNotice({
+        type: "error",
+        text: "Das Datum bei ‚Von‘ darf nicht nach dem Datum bei ‚Bis‘ liegen.",
       });
       return;
     }
+
+    setActionNotice(null);
+    await ladeTouren(null, { clearExpanded: true });
+  }
+
+  async function resetFilter() {
+    const emptyFilters = {
+      fahrer: "",
+      von: "",
+      bis: "",
+      kw: "",
+      kunde: "",
+    };
+
+    writeFilterValues(emptyFilters);
+    setShowAdvancedFilters(false);
+    setTab("alle");
+    setActionNotice(null);
+    await ladeTouren(emptyFilters, { clearExpanded: true });
+  }
+
+  async function removeAppliedFilter(key) {
+    const nextFilters = { ...appliedFilters, [key]: "" };
+    writeFilterValues(nextFilters);
+    setActionNotice(null);
+    await ladeTouren(nextFilters, { clearExpanded: true });
+  }
+
+  const statusCounts = useMemo(() => {
+    const counts = { alle: touren.length, heute: 0, zukuenftig: 0, vergangen: 0 };
+
+    touren.forEach((tour) => {
+      const status = getStatusKey(tour.datum, todayISO);
+      if (status === "heute") counts.heute += 1;
+      if (status === "zukuenftig") counts.zukuenftig += 1;
+      if (status === "vergangen") counts.vergangen += 1;
+    });
+
+    return counts;
+  }, [touren, todayISO]);
+
+  const gefiltert = useMemo(() => {
+    let rows = touren;
+
+    if (tab === "zukuenftig") {
+      rows = rows.filter((tour) => getStatusKey(tour.datum, todayISO) === "zukuenftig");
+    } else if (tab === "vergangen") {
+      rows = rows.filter((tour) => getStatusKey(tour.datum, todayISO) === "vergangen");
+    }
+
+    const visibleSet = new Set(rows.map((tour) => tour.id));
+    const mapById = new Map(rows.map((tour) => [tour.id, tour]));
+    const sortedRows = ordered
+      .filter((id) => visibleSet.has(id))
+      .map((id) => mapById.get(id))
+      .filter(Boolean);
+    const sortedIds = new Set(sortedRows.map((tour) => tour.id));
+    const missingRows = rows.filter((tour) => !sortedIds.has(tour.id));
+
+    return [...sortedRows, ...missingRows];
+  }, [touren, tab, todayISO, ordered]);
+
+  const visibleStopCount = useMemo(
+    () =>
+      gefiltert.reduce((sum, tour) => {
+        const count = Number(tour.stopps_count);
+        return sum + (Number.isFinite(count) ? count : 0);
+      }, 0),
+    [gefiltert]
+  );
+
+  const activeFilters = useMemo(() => {
+    const items = [];
+    const selectedDriver = fahrer.find(
+      (entry) => String(entry.id) === String(appliedFilters.fahrer)
+    );
+
+    if (appliedFilters.fahrer) {
+      items.push({
+        key: "fahrer",
+        label: `Fahrer: ${selectedDriver?.name || appliedFilters.fahrer}`,
+      });
+    }
+    if (appliedFilters.kunde) {
+      items.push({ key: "kunde", label: `Kunde: ${appliedFilters.kunde}` });
+    }
+    if (appliedFilters.von) {
+      items.push({ key: "von", label: `Von: ${fmtDate(appliedFilters.von)}` });
+    }
+    if (appliedFilters.bis) {
+      items.push({ key: "bis", label: `Bis: ${fmtDate(appliedFilters.bis)}` });
+    }
+    if (appliedFilters.kw) {
+      items.push({ key: "kw", label: `Kalenderwoche: ${appliedFilters.kw}` });
+    }
+
+    return items;
+  }, [fahrer, appliedFilters]);
+
+  const advancedFilterCount = [
+    appliedFilters.von,
+    appliedFilters.bis,
+    appliedFilters.kw,
+  ].filter(Boolean).length;
+
+  async function toggleStopps(tour) {
+    const tourId = tour.id;
+
+    if (hasOwn(openStops, tourId)) {
+      setOpenStops((current) => {
+        const next = { ...current };
+        delete next[tourId];
+        return next;
+      });
+      return;
+    }
+
+    if (loadingStops[tourId]) return;
+
     try {
-      const s = await api.getStoppsByTour(id);
-      setOpenStops((m) => ({ ...m, [id]: s || [] }));
-    } catch (e) {
-      console.error(e);
-      alert("Stopps konnten nicht geladen werden.");
+      setLoadingStops((current) => ({ ...current, [tourId]: true }));
+      const data = await api.getStoppsByTour(tourId);
+      setOpenStops((current) => ({
+        ...current,
+        [tourId]: Array.isArray(data) ? data : [],
+      }));
+    } catch (error) {
+      console.error("Stopps laden fehlgeschlagen:", error);
+      setActionNotice({
+        type: "error",
+        text: getErrorMessage(error, "Die Stopps konnten nicht geladen werden."),
+      });
+    } finally {
+      setLoadingStops((current) => {
+        const next = { ...current };
+        delete next[tourId];
+        return next;
+      });
     }
   }
 
-  // ---- DnD handlers
   function handleDragStart(event) {
     setActiveId(event.active.id);
   }
@@ -224,27 +738,35 @@ export default function Uebersicht() {
   async function handleDragEnd(event) {
     const { active, over } = event;
     setActiveId(null);
-    if (!over || active.id === over.id) return;
 
-    const visIds = gefiltert.map((t) => t.id);
-    const oldIndex = visIds.indexOf(active.id);
-    const newIndex = visIds.indexOf(over.id);
+    if (!over || active.id === over.id || reorderSaving) return;
+
+    const visibleIds = gefiltert.map((tour) => tour.id);
+    const oldIndex = visibleIds.indexOf(active.id);
+    const newIndex = visibleIds.indexOf(over.id);
+
     if (oldIndex === -1 || newIndex === -1) return;
 
-    const newVis = arrayMove(visIds, oldIndex, newIndex);
+    const reorderedVisibleIds = arrayMove(visibleIds, oldIndex, newIndex);
+    const previousOrder = [...ordered];
+    const nextOrder = reorderVisibleIds(previousOrder, visibleIds, reorderedVisibleIds);
 
-    setOrdered((prev) => {
-      const setVis = new Set(visIds);
-      const rest = prev.filter((id) => !setVis.has(id));
-      return [...newVis, ...rest];
-    });
+    setOrdered(nextOrder);
+    setReorderSaving(true);
+    setActionNotice(null);
 
     try {
-      await api.reorderTouren(newVis);
-    } catch (e) {
-      console.error(e);
-      alert("Reihenfolge konnte nicht gespeichert werden.");
-      ladeTouren();
+      await api.reorderTouren(reorderedVisibleIds);
+    } catch (error) {
+      console.error("Reihenfolge speichern fehlgeschlagen:", error);
+      setOrdered(previousOrder);
+      setActionNotice({
+        type: "error",
+        text: getErrorMessage(error, "Die Reihenfolge konnte nicht gespeichert werden."),
+      });
+      await ladeTouren(appliedFilters);
+    } finally {
+      setReorderSaving(false);
     }
   }
 
@@ -252,113 +774,257 @@ export default function Uebersicht() {
     setActiveId(null);
   }
 
+  const tabOptions = [
+    { key: "alle", label: "Alle", count: statusCounts.alle },
+    { key: "zukuenftig", label: "Zukünftig", count: statusCounts.zukuenftig },
+    { key: "vergangen", label: "Vergangen", count: statusCounts.vergangen },
+  ];
+
+  const showTabEmptyState = !loading && !msg && touren.length > 0 && gefiltert.length === 0;
+
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl md:text-3xl font-semibold text-[#0058A3]">Gesamtübersicht</h1>
+      <h1 className="text-2xl font-semibold text-[#0058A3]">Gesamtübersicht</h1>
 
-      {/* Filter */}
-      <section className="bg-white p-4 rounded-lg shadow space-y-3">
-        <h2 className="text-lg font-medium text-[#0058A3]">Filter</h2>
-        <div className="grid lg:grid-cols-5 md:grid-cols-3 grid-cols-1 gap-3">
+      <InlineNotice notice={actionNotice} onClose={() => setActionNotice(null)} />
+
+      <section className="space-y-5 bg-white p-4 shadow sm:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <label className="text-sm text-gray-600 block">Fahrer</label>
-            <select
-              className="border rounded-md px-3 py-2 w-full"
-              value={filterFahrer}
-              onChange={(e) => setFilterFahrer(e.target.value)}
-            >
-              <option value="">Alle Fahrer</option>
-              {fahrer.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center gap-2">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#E8F1FA] text-[#0058A3]">
+                <Filter size={20} aria-hidden="true" />
+              </span>
+              <div>
+                <h2 className="text-xl font-semibold text-[#0058A3]">Touren finden</h2>
+                <p className="mt-0.5 text-sm text-gray-600">
+                  Fahrer und Kunde sind direkt sichtbar. Zeitraum und Kalenderwoche finden Sie unter weitere Filter.
+                </p>
+              </div>
+            </div>
           </div>
-          <div>
-            <label className="text-sm text-gray-600 block">Datum von</label>
-            <input
-              type="date"
-              className="border rounded-md px-3 py-2 w-full"
-              value={filterVon}
-              onChange={(e) => setFilterVon(e.target.value)}
-            />
+
+          <button
+            type="button"
+            onClick={() => setShowAdvancedFilters((current) => !current)}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-50 sm:w-auto"
+            aria-expanded={showAdvancedFilters}
+          >
+            <SlidersHorizontal size={18} aria-hidden="true" />
+            Weitere Filter
+            {advancedFilterCount > 0 ? (
+              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#0058A3] px-1.5 text-[11px] font-bold text-white">
+                {advancedFilterCount}
+              </span>
+            ) : null}
+            {showAdvancedFilters ? (
+              <ChevronUp size={17} aria-hidden="true" />
+            ) : (
+              <ChevronDown size={17} aria-hidden="true" />
+            )}
+          </button>
+        </div>
+
+        <form onSubmit={handleFilterSubmit} className="space-y-4">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <FilterField id="uebersicht-filter-fahrer" label="Fahrer">
+              <select
+                id="uebersicht-filter-fahrer"
+                className="w-full"
+                value={filterFahrer}
+                onChange={(event) => setFilterFahrer(event.target.value)}
+                disabled={loading}
+              >
+                <option value="">Alle Fahrer</option>
+                {fahrer.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.name}
+                  </option>
+                ))}
+              </select>
+            </FilterField>
+
+            <FilterField id="uebersicht-filter-kunde" label="Kunde">
+              <input
+                id="uebersicht-filter-kunde"
+                type="search"
+                className="w-full"
+                placeholder="Kundenname eingeben"
+                value={filterKunde}
+                onChange={(event) => setFilterKunde(event.target.value)}
+                disabled={loading}
+              />
+            </FilterField>
           </div>
-          <div>
-            <label className="text-sm text-gray-600 block">Datum bis</label>
-            <input
-              type="date"
-              className="border rounded-md px-3 py-2 w-full"
-              value={filterBis}
-              onChange={(e) => setFilterBis(e.target.value)}
-            />
+
+          {showAdvancedFilters ? (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+              <div className="grid gap-4 md:grid-cols-3">
+                <FilterField id="uebersicht-filter-von" label="Datum von">
+                  <input
+                    id="uebersicht-filter-von"
+                    type="date"
+                    className="w-full"
+                    value={filterVon}
+                    onChange={(event) => setFilterVon(event.target.value)}
+                    disabled={loading}
+                  />
+                </FilterField>
+
+                <FilterField id="uebersicht-filter-bis" label="Datum bis">
+                  <input
+                    id="uebersicht-filter-bis"
+                    type="date"
+                    className="w-full"
+                    value={filterBis}
+                    onChange={(event) => setFilterBis(event.target.value)}
+                    disabled={loading}
+                  />
+                </FilterField>
+
+                <FilterField
+                  id="uebersicht-filter-kw"
+                  label="Kalenderwoche"
+                  help="Ein Datumsbereich hat Vorrang vor der Kalenderwoche."
+                >
+                  <input
+                    id="uebersicht-filter-kw"
+                    type="week"
+                    className="w-full"
+                    value={filterKw}
+                    onChange={(event) => setFilterKw(event.target.value)}
+                    disabled={loading}
+                  />
+                </FilterField>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="flex flex-col gap-3 border-t border-gray-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              {activeFilters.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {activeFilters.map((item) => (
+                    <FilterChip
+                      key={item.key}
+                      onRemove={() => removeAppliedFilter(item.key)}
+                    >
+                      {item.label}
+                    </FilterChip>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">Ohne Filter werden alle Touren angezeigt.</p>
+              )}
+            </div>
+
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              <button
+                type="button"
+                onClick={resetFilter}
+                disabled={loading}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-gray-100 px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-200 disabled:opacity-50"
+              >
+                <RotateCcw size={17} aria-hidden="true" />
+                Zurücksetzen
+              </button>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="inline-flex min-w-[165px] items-center justify-center gap-2 rounded-xl bg-[#0058A3] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#003F75] disabled:opacity-60"
+              >
+                {loading ? (
+                  <Loader2 className="animate-spin" size={18} aria-hidden="true" />
+                ) : (
+                  <Search size={18} aria-hidden="true" />
+                )}
+                {loading ? "Touren werden geladen..." : "Filter anwenden"}
+              </button>
+            </div>
           </div>
-          <div>
-            <label className="text-sm text-gray-600 block">Kalenderwoche</label>
-            <input
-              type="week"
-              className="border rounded-md px-3 py-2 w-full"
-              value={filterKw}
-              onChange={(e) => setFilterKw(e.target.value)}
-            />
+        </form>
+      </section>
+
+      <section className="space-y-4 bg-white p-3 shadow sm:p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex w-full gap-2 overflow-x-auto pb-1 lg:w-auto lg:overflow-visible lg:pb-0">
+            {tabOptions.map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setTab(option.key)}
+                className={`inline-flex min-w-fit items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+                  tab === option.key
+                    ? "bg-[#0058A3] text-white shadow-sm"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                }`}
+              >
+                {option.label}
+                <span
+                  className={`inline-flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-xs ${
+                    tab === option.key ? "bg-white/20 text-white" : "bg-white text-gray-600"
+                  }`}
+                >
+                  {option.count}
+                </span>
+              </button>
+            ))}
           </div>
-          <div>
-            <label className="text-sm text-gray-600 block">Kunde</label>
-            <input
-              type="text"
-              className="border rounded-md px-3 py-2 w-full"
-              placeholder="Kundenname…"
-              value={filterKunde}
-              onChange={(e) => setFilterKunde(e.target.value)}
-            />
+
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-gray-600">
+            <span className="inline-flex items-center gap-1.5">
+              <Truck size={17} className="text-[#0058A3]" aria-hidden="true" />
+              <strong className="text-gray-900">{gefiltert.length}</strong> Touren
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <ListOrdered size={17} className="text-[#0058A3]" aria-hidden="true" />
+              <strong className="text-gray-900">{visibleStopCount}</strong> Stopps
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <CalendarDays size={17} className="text-[#0058A3]" aria-hidden="true" />
+              <strong className="text-gray-900">{statusCounts.heute}</strong> heute
+            </span>
           </div>
         </div>
-        <div className="flex gap-3 pt-2">
-          <button
-            onClick={async () => { await ladeTouren(); }}
-            className="bg-[#0058A3] text-white px-4 py-2 rounded-md hover:bg-blue-800"
-          >
-            Filter anwenden
-          </button>
-          <button
-            onClick={resetFilter}
-            className="bg-gray-200 px-4 py-2 rounded-md hover:bg-gray-300"
-          >
-            Zurücksetzen
-          </button>
+
+        <div className="flex items-start gap-2 rounded-xl bg-gray-50 px-3 py-2.5 text-xs leading-5 text-gray-600">
+          <GripVertical className="mt-0.5 shrink-0" size={16} aria-hidden="true" />
+          <span>
+            Die Touren können am Griff verschoben werden. Die gespeicherte Reihenfolge gilt auch nach dem erneuten Laden.
+            {reorderSaving ? " Reihenfolge wird gerade gespeichert..." : ""}
+          </span>
         </div>
       </section>
 
-      {/* Tabs */}
-      <section className="bg-white p-2 rounded-lg shadow">
-        <div className="flex gap-2">
-          <button
-            className={`px-4 py-2 rounded-md ${tab === "alle" ? "bg-[#0058A3] text-white" : "bg-gray-100"}`}
-            onClick={() => setTab("alle")}
-          >
-            Alle
-          </button>
-          <button
-            className={`px-4 py-2 rounded-md ${tab === "zukuenftig" ? "bg-[#0058A3] text-white" : "bg-gray-100"}`}
-            onClick={() => setTab("zukuenftig")}
-          >
-            Zukünftig
-          </button>
-          <button
-            className={`px-4 py-2 rounded-md ${tab === "vergangen" ? "bg-[#0058A3] text-white" : "bg-gray-100"}`}
-            onClick={() => setTab("vergangen")}
-          >
-            Vergangen
-          </button>
-        </div>
-      </section>
+      {/* Smartphone und Tablet: Kartenansicht */}
+      <section className="space-y-3 lg:hidden">
+        {loading ? (
+          <div className="flex items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-4 py-10 text-sm text-gray-600 shadow-sm">
+            <Loader2 className="animate-spin text-[#0058A3]" size={20} aria-hidden="true" />
+            Touren werden geladen...
+          </div>
+        ) : null}
 
-      {/* Mobile Cards mit Drag&Drop */}
-      <section className="md:hidden space-y-3">
-        {loading && <div className="text-gray-500">Laden…</div>}
-        {!loading && msg && <div className="text-gray-600">{msg}</div>}
+        {!loading && msg ? (
+          <div
+            className={`rounded-2xl border px-4 py-6 text-center text-sm shadow-sm ${
+              loadError
+                ? "border-red-200 bg-red-50 text-red-700"
+                : "border-gray-200 bg-white text-gray-600"
+            }`}
+          >
+            {msg}
+          </div>
+        ) : null}
 
-        {!loading && gefiltert.length > 0 && (
+        {showTabEmptyState ? (
+          <div className="rounded-2xl border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-600 shadow-sm">
+            In diesem Bereich sind keine Touren vorhanden.
+          </div>
+        ) : null}
+
+        {!loading && gefiltert.length > 0 ? (
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
@@ -366,246 +1032,247 @@ export default function Uebersicht() {
             onDragEnd={handleDragEnd}
             onDragCancel={handleDragCancel}
           >
-            <SortableContext items={gefiltert.map((t) => t.id)} strategy={verticalListSortingStrategy}>
-              {gefiltert.map((t) => {
-                const stopps = Array.isArray(openStops[t.id]) ? openStops[t.id] : null;
-                return (
-                  <SortableCard key={t.id} id={t.id}>
-                    {{
-                      header: (
-                        <>
-                          <div className="text-xs text-gray-500">{fmtDate(t.datum)}</div>
-                          <div className="text-base font-semibold text-[#0058A3]">{t.fahrer_name}</div>
-                          <div className="text-sm text-gray-700 mt-1">
-                            <b>{t.stopps_count ?? 0}</b> Stopps
-                            {t.kunden_preview ? (
-                              <span className="text-gray-500"> · {t.kunden_preview}</span>
-                            ) : null}
+            <SortableContext
+              items={gefiltert.map((tour) => tour.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <div className="space-y-3">
+                {gefiltert.map((tour) => {
+                  const stoppsAreOpen = hasOwn(openStops, tour.id);
+                  const stopps = stoppsAreOpen ? openStops[tour.id] : [];
+                  const stoppsAreLoading = Boolean(loadingStops[tour.id]);
+
+                  return (
+                    <SortableCard
+                      key={tour.id}
+                      id={tour.id}
+                      disabled={reorderSaving || loading}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 text-xs font-medium text-gray-500">
+                            <CalendarDays size={14} aria-hidden="true" />
+                            {fmtDate(tour.datum)}
                           </div>
-                        </>
-                      ),
-                      status: <StatusBadge dateISO={t.datum} todayISO={todayISO} />,
-                      body: (
-                        <>
-                          <button
-                            onClick={() => toggleStopps(t)}
-                            className="w-full bg-gray-100 hover:bg-gray-200 px-3 py-2 rounded-md text-sm"
-                          >
-                            {stopps ? "Stopps ausblenden" : "Stopps anzeigen"}
-                          </button>
-                          {stopps && (
-                            <div className="mt-3 space-y-2">
-                              {stopps.length === 0 && (
-                                <div className="text-sm text-gray-500 italic">Keine Stopps vorhanden</div>
-                              )}
-                              {stopps.map((s) => (
-                                <div key={s.id} className="border rounded-md p-3">
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div>
-                                      <div className="text-xs text-gray-500">
-                                        Pos. {Number.isFinite(s.position) ? s.position : "–"}
-                                      </div>
-                                      <div className="text-sm font-semibold text-[#0058A3] break-words">
-                                        {s.kunde || "—"}
-                                      </div>
-                                    </div>
-                                    {s.ankunft ? (
-                                      <span className="text-xs bg-[#E8F1FA] text-[#0058A3] px-2 py-1 rounded">
-                                        {s.ankunft}
-                                      </span>
-                                    ) : null}
-                                  </div>
+                          <div className="mt-1 flex items-center gap-2 break-words text-base font-semibold text-[#0058A3]">
+                            <UserRound size={17} className="shrink-0" aria-hidden="true" />
+                            {tour.fahrer_name || "Ohne Fahrer"}
+                          </div>
+                        </div>
+                        <StatusBadge dateISO={tour.datum} todayISO={todayISO} />
+                      </div>
 
-                                  <div className="mt-2 space-y-1 text-sm">
-                                    <div className="flex gap-2">
-                                      <span>📍</span>
-                                      {s.adresse ? (
-                                        <a
-                                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                                            s.adresse
-                                          )}`}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="text-blue-600 hover:underline break-words"
-                                        >
-                                          {s.adresse}
-                                        </a>
-                                      ) : (
-                                        <span className="text-gray-500">Keine Adresse</span>
-                                      )}
-                                    </div>
-                                    <div className="flex gap-2">
-                                      <span>📞</span>
-                                      {s.telefon ? (
-                                        <a className="text-blue-600 hover:underline" href={telHref(s.telefon)}>
-                                          {s.telefon}
-                                        </a>
-                                      ) : (
-                                        <span className="text-gray-500">—</span>
-                                      )}
-                                    </div>
-                                    {(s.kommission || s.hinweis) && (
-                                      <div className="flex gap-2">
-                                        <span>📝</span>
-                                        <span className="break-words">{s.kommission || s.hinweis}</span>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
+                      <div className="mt-3 rounded-xl bg-gray-50 px-3 py-2.5 text-sm text-gray-700">
+                        <div>
+                          <strong>{Number(tour.stopps_count) || 0}</strong>{" "}
+                          {Number(tour.stopps_count) === 1 ? "Stopp" : "Stopps"}
+                        </div>
+                        {tour.kunden_preview ? (
+                          <div className="mt-1 break-words text-xs leading-5 text-gray-500">
+                            {tour.kunden_preview}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => toggleStopps(tour)}
+                        disabled={stoppsAreLoading}
+                        className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-50 disabled:opacity-60"
+                        aria-expanded={stoppsAreOpen}
+                      >
+                        {stoppsAreLoading ? (
+                          <Loader2 className="animate-spin" size={17} aria-hidden="true" />
+                        ) : stoppsAreOpen ? (
+                          <ChevronUp size={17} aria-hidden="true" />
+                        ) : (
+                          <ChevronDown size={17} aria-hidden="true" />
+                        )}
+                        {stoppsAreLoading
+                          ? "Stopps werden geladen..."
+                          : stoppsAreOpen
+                          ? "Stopps ausblenden"
+                          : "Stopps anzeigen"}
+                      </button>
+
+                      {stoppsAreOpen ? (
+                        <div className="mt-3 space-y-2.5 border-t border-gray-200 pt-3">
+                          {stopps.length === 0 ? (
+                            <div className="rounded-xl bg-gray-50 px-3 py-5 text-center text-sm text-gray-500">
+                              Keine Stopps vorhanden
                             </div>
+                          ) : (
+                            stopps.map((stopp, index) => (
+                              <MobileStopCard key={stopp.id} stopp={stopp} index={index} />
+                            ))
                           )}
-                        </>
-                      ),
-                    }}
-                  </SortableCard>
-                );
-              })}
+                        </div>
+                      ) : null}
+                    </SortableCard>
+                  );
+                })}
+              </div>
             </SortableContext>
-
             <DragOverlay />
           </DndContext>
-        )}
+        ) : null}
       </section>
 
-      {/* Desktop Tabelle mit Drag&Drop */}
-      <section className="hidden md:block bg-white p-4 rounded-lg shadow space-y-3">
-        <h2 className="text-lg font-medium text-[#0058A3]">Touren (Tabelle)</h2>
-        {loading && <div className="text-gray-500">Laden…</div>}
-        {!loading && msg && <div className="text-gray-600">{msg}</div>}
+      {/* Desktop: Tabelle */}
+      <section className="hidden space-y-4 bg-white p-4 shadow lg:block xl:p-5">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-semibold text-[#0058A3]">Touren</h2>
+            <p className="mt-1 text-sm text-gray-600">
+              Stopps können direkt unter der jeweiligen Tour ein- und ausgeblendet werden.
+            </p>
+          </div>
+          {reorderSaving ? (
+            <span className="inline-flex items-center gap-2 rounded-full bg-[#E8F1FA] px-3 py-1.5 text-xs font-semibold text-[#0058A3]">
+              <Loader2 className="animate-spin" size={14} aria-hidden="true" />
+              Reihenfolge wird gespeichert
+            </span>
+          ) : null}
+        </div>
 
-        {!loading && gefiltert.length > 0 && (
-          <div className="overflow-x-auto">
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragStart={handleDragStart}
-              onDragEnd={handleDragEnd}
-              onDragCancel={handleDragCancel}
+        {loading ? (
+          <div className="flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-4 py-10 text-sm text-gray-600">
+            <Loader2 className="animate-spin text-[#0058A3]" size={20} aria-hidden="true" />
+            Touren werden geladen...
+          </div>
+        ) : null}
+
+        {!loading && msg ? (
+          <div
+            className={`rounded-xl border px-4 py-6 text-center text-sm ${
+              loadError
+                ? "border-red-200 bg-red-50 text-red-700"
+                : "border-gray-200 bg-gray-50 text-gray-600"
+            }`}
+          >
+            {msg}
+          </div>
+        ) : null}
+
+        {showTabEmptyState ? (
+          <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-600">
+            In diesem Bereich sind keine Touren vorhanden.
+          </div>
+        ) : null}
+
+        {!loading && gefiltert.length > 0 ? (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            onDragCancel={handleDragCancel}
+          >
+            <SortableContext
+              items={gefiltert.map((tour) => tour.id)}
+              strategy={verticalListSortingStrategy}
             >
-              <table className="min-w-full border text-sm">
-                <thead className="bg-[#0058A3] text-white">
-                  <tr>
-                    <th className="border px-2 py-1 w-[40px]"></th>
-                    <th className="border px-2 py-1 text-left w-[140px]">Datum</th>
-                    <th className="border px-2 py-1 text-left w-[220px]">Fahrer</th>
-                    <th className="border px-2 py-1 text-left w-[90px]">Stopps</th>
-                    <th className="border px-2 py-1 text-left w-[420px]">Kunden (Auszug)</th>
-                    <th className="border px-2 py-1 text-left w-[120px]">Status</th>
-                    <th className="border px-2 py-1 text-left w-[180px]">Aktionen</th>
-                  </tr>
-                </thead>
-
-                {/* WICHTIG: Während des Drag-Vorgangs auf Block/Flex schalten */}
-                <SortableContext items={gefiltert.map((t) => t.id)} strategy={verticalListSortingStrategy}>
+              <div className="overflow-x-auto rounded-xl border border-gray-200">
+                <table className="min-w-[1120px] w-full border-collapse text-sm">
+                  <thead className="bg-[#0058A3] text-white">
+                    <tr>
+                      <th className="w-[48px] border-r border-white/15 px-2 py-3 text-center">
+                        <span className="sr-only">Reihenfolge</span>
+                      </th>
+                      <th className="w-[135px] border-r border-white/15 px-3 py-3 text-left">Datum</th>
+                      <th className="w-[210px] border-r border-white/15 px-3 py-3 text-left">Fahrer</th>
+                      <th className="w-[90px] border-r border-white/15 px-3 py-3 text-left">Stopps</th>
+                      <th className="border-r border-white/15 px-3 py-3 text-left">Kunden</th>
+                      <th className="w-[125px] border-r border-white/15 px-3 py-3 text-left">Status</th>
+                      <th className="w-[205px] px-3 py-3 text-left">Aktion</th>
+                    </tr>
+                  </thead>
                   <tbody className={`dnd-table-body ${isDraggingTable ? "dragging" : ""}`}>
-                    {gefiltert.map((t) => (
-                      <SortableRow key={t.id} id={t.id}>
-                        <>
-                          <td className="border px-2 py-1 w-[140px]">{fmtDate(t.datum)}</td>
-                          <td className="border px-2 py-1 w-[220px]">{t.fahrer_name}</td>
-                          <td className="border px-2 py-1 w-[90px]">{t.stopps_count}</td>
-                          <td className="border px-2 py-1 w-[420px]">
-                            {t.kunden_preview || <span className="text-gray-400">–</span>}
-                          </td>
-                          <td className="border px-2 py-1 w-[120px]">
-                            <StatusBadge dateISO={t.datum} todayISO={todayISO} />
-                          </td>
-                          <td className="border px-2 py-1 w-[180px]">
-                            <button
-                              onClick={() => toggleStopps(t)}
-                              className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
-                            >
-                              {openStops[t.id] ? "Stopps ausblenden" : "Stopps anzeigen"}
-                            </button>
-                          </td>
-                        </>
-                      </SortableRow>
-                    ))}
+                    {gefiltert.map((tour) => {
+                      const stoppsAreOpen = hasOwn(openStops, tour.id);
+                      const stopps = stoppsAreOpen ? openStops[tour.id] : [];
+                      const stoppsAreLoading = Boolean(loadingStops[tour.id]);
 
-                    {/* Unterzeilen: Stopps (wenn geöffnet) */}
-                    {gefiltert.map((t) => {
-                      const stopps = Array.isArray(openStops[t.id]) ? openStops[t.id] : null;
-                      if (!stopps) return null;
                       return (
-                        <tr key={`${t.id}-stopps`} className="dnd-row-stopps">
-                          <td className="border px-2 py-2 bg-gray-50" colSpan={7}>
-                            <div className="overflow-x-auto">
-                              <table className="min-w-full border text-sm">
-                                <thead className="bg-gray-200">
-                                  <tr>
-                                    <th className="border px-2 py-1 text-left">Pos</th>
-                                    <th className="border px-2 py-1 text-left">Kunde</th>
-                                    <th className="border px-2 py-1 text-left">Adresse</th>
-                                    <th className="border px-2 py-1 text-left">Telefon</th>
-                                    <th className="border px-2 py-1 text-left">Kommission</th>
-                                    <th className="border px-2 py-1 text-left">Hinweis</th>
-                                    <th className="border px-2 py-1 text-left">Ankunft</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {stopps.length === 0 && (
-                                    <tr>
-                                      <td colSpan={7} className="text-center py-2 text-gray-500">
-                                        Keine Stopps
-                                      </td>
-                                    </tr>
-                                  )}
-                                  {stopps.map((s) => (
-                                    <tr key={s.id} className="hover:bg-white">
-                                      <td className="border px-2 py-1 w-16 text-center">
-                                        {Number.isFinite(s.position) ? s.position : ""}
-                                      </td>
-                                      <td className="border px-2 py-1">{s.kunde}</td>
-                                      <td className="border px-2 py-1">
-                                        {s.adresse ? (
-                                          <a
-                                            href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                                              s.adresse
-                                            )}`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="text-blue-600 hover:underline break-words"
-                                          >
-                                            {s.adresse}
-                                          </a>
-                                        ) : (
-                                          "—"
-                                        )}
-                                      </td>
-                                      <td className="border px-2 py-1">
-                                        {s.telefon ? (
-                                          <a className="text-blue-600 hover:underline" href={telHref(s.telefon)}>
-                                            {s.telefon}
-                                          </a>
-                                        ) : (
-                                          "—"
-                                        )}
-                                      </td>
-                                      <td className="border px-2 py-1">
-                                        {s.kommission || <span className="text-gray-400">—</span>}
-                                      </td>
-                                      <td className="border px-2 py-1">
-                                        {s.hinweis || <span className="text-gray-400">—</span>}
-                                      </td>
-                                      <td className="border px-2 py-1">{s.ankunft || "—"}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          </td>
-                        </tr>
+                        <React.Fragment key={tour.id}>
+                          <SortableRow
+                            id={tour.id}
+                            disabled={reorderSaving || loading}
+                          >
+                            <td className="w-[135px] border-b border-gray-200 px-3 py-3 font-medium text-gray-900">
+                              {fmtDate(tour.datum)}
+                            </td>
+                            <td className="w-[210px] border-b border-gray-200 px-3 py-3 font-semibold text-[#0058A3]">
+                              {tour.fahrer_name || "–"}
+                            </td>
+                            <td className="w-[90px] border-b border-gray-200 px-3 py-3">
+                              {Number(tour.stopps_count) || 0}
+                            </td>
+                            <td className="max-w-[460px] border-b border-gray-200 px-3 py-3">
+                              {tour.kunden_preview || <span className="text-gray-400">–</span>}
+                            </td>
+                            <td className="w-[125px] border-b border-gray-200 px-3 py-3">
+                              <StatusBadge dateISO={tour.datum} todayISO={todayISO} />
+                            </td>
+                            <td className="w-[205px] border-b border-gray-200 px-3 py-3">
+                              <button
+                                type="button"
+                                onClick={() => toggleStopps(tour)}
+                                disabled={stoppsAreLoading}
+                                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-200 disabled:opacity-60"
+                                aria-expanded={stoppsAreOpen}
+                              >
+                                {stoppsAreLoading ? (
+                                  <Loader2 className="animate-spin" size={16} aria-hidden="true" />
+                                ) : stoppsAreOpen ? (
+                                  <ChevronUp size={16} aria-hidden="true" />
+                                ) : (
+                                  <ChevronDown size={16} aria-hidden="true" />
+                                )}
+                                {stoppsAreLoading
+                                  ? "Wird geladen..."
+                                  : stoppsAreOpen
+                                  ? "Stopps ausblenden"
+                                  : "Stopps anzeigen"}
+                              </button>
+                            </td>
+                          </SortableRow>
+
+                          {!isDraggingTable && stoppsAreOpen ? (
+                            <tr className="dnd-row-stopps bg-gray-50">
+                              <td colSpan={7} className="border-b border-gray-200 px-4 py-4">
+                                <div className="mb-3 flex items-center justify-between gap-3">
+                                  <div>
+                                    <div className="font-semibold text-gray-900">
+                                      Stopps von {tour.fahrer_name} am {fmtDate(tour.datum)}
+                                    </div>
+                                    <div className="mt-0.5 text-xs text-gray-500">
+                                      {stopps.length} {stopps.length === 1 ? "Stopp" : "Stopps"}
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleStopps(tour)}
+                                    className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-gray-700 shadow-sm ring-1 ring-inset ring-gray-200 hover:bg-gray-100"
+                                  >
+                                    <ChevronUp size={15} aria-hidden="true" />
+                                    Schließen
+                                  </button>
+                                </div>
+                                <StoppsTable stopps={stopps} />
+                              </td>
+                            </tr>
+                          ) : null}
+                        </React.Fragment>
                       );
                     })}
                   </tbody>
-                </SortableContext>
-              </table>
-
-              <DragOverlay />
-            </DndContext>
-          </div>
-        )}
+                </table>
+              </div>
+            </SortableContext>
+            <DragOverlay />
+          </DndContext>
+        ) : null}
       </section>
     </div>
   );
