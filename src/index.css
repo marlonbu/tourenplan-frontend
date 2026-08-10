@@ -2,19 +2,117 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Basis-Farben und globale Layoutanpassung */
+:root {
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  min-height: 100%;
+  background: #f4f5f7;
+  scroll-behavior: smooth;
+}
+
 body {
-  @apply bg-gehlenborg-gray text-gray-800 font-sans;
+  @apply m-0 min-h-screen bg-gehlenborg-gray font-sans text-gray-800 antialiased;
+  min-width: 320px;
 }
 
-/* Karten und Container */
+#root {
+  min-height: 100vh;
+}
+
+::selection {
+  color: #003f75;
+  background: rgba(0, 88, 163, 0.18);
+}
+
+/* =========================================================
+   App-Grundlayout
+========================================================= */
+
+.app-shell {
+  min-height: 100vh;
+  background:
+    linear-gradient(180deg, rgba(232, 241, 250, 0.72) 0, rgba(244, 245, 247, 0) 240px),
+    #f4f5f7;
+}
+
+.app-sidebar {
+  background: linear-gradient(180deg, #003f75 0%, #0058a3 100%);
+}
+
+.app-main {
+  min-height: 100vh;
+}
+
+.app-content {
+  width: 100%;
+  max-width: 1500px;
+  margin-inline: auto;
+  padding: 2rem clamp(1.25rem, 2.4vw, 2.75rem) 2.75rem;
+}
+
+.app-page > div > h1 {
+  margin: 0;
+  font-size: clamp(1.75rem, 2.2vw, 2.25rem);
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+
+.app-page > div > :is(section, div).bg-white:not(.fixed) {
+  border: 1px solid #e5e7eb;
+  border-radius: 1rem !important;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.055) !important;
+}
+
+.app-skip-link {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 100;
+  transform: translateY(-160%);
+  border-radius: 0.75rem;
+  background: #ffffff;
+  color: #003f75;
+  padding: 0.65rem 0.9rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+  transition: transform 150ms ease;
+}
+
+.app-skip-link:focus {
+  transform: translateY(0);
+}
+
+.app-header-action {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.6rem 0.75rem !important;
+}
+
+.app-mobile-nav-link {
+  min-height: 54px;
+}
+
+/* =========================================================
+   Wiederverwendbare Karten und Buttons
+========================================================= */
+
 .card {
-  @apply bg-white rounded-xl shadow-soft p-4;
+  @apply rounded-xl bg-white p-4 shadow-soft;
+  border: 1px solid #e5e7eb;
 }
 
-/* Buttons */
 .btn {
-  @apply inline-flex items-center justify-center font-semibold rounded-md px-4 py-2 transition;
+  @apply inline-flex items-center justify-center rounded-lg px-4 py-2 font-semibold transition;
 }
 
 .btn-blue {
@@ -29,108 +127,214 @@ body {
   @apply bg-red-500 text-white hover:bg-red-600;
 }
 
-/* Tabellen */
+button {
+  font: inherit;
+}
+
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+}
+
+button:disabled {
+  opacity: 0.65;
+}
+
+:where(button, a, input, select, textarea):focus-visible {
+  outline: 3px solid rgba(0, 88, 163, 0.25);
+  outline-offset: 2px;
+}
+
+button,
+a,
+label {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* =========================================================
+   Formulare
+========================================================= */
+
+input,
+select,
+textarea {
+  @apply rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-900 shadow-sm transition;
+}
+
+input:hover:not(:disabled),
+select:hover:not(:disabled),
+textarea:hover:not(:disabled) {
+  border-color: #9ca3af;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  @apply outline-none ring-2 ring-gehlenborg-blue;
+  border-color: #0058a3;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #9ca3af;
+  opacity: 1;
+}
+
+/* =========================================================
+   Tabellen
+========================================================= */
+
 .table {
   @apply w-full border-collapse text-sm;
 }
 
 .table th {
-  @apply bg-gehlenborg-blue text-white font-semibold text-left px-3 py-2;
+  @apply bg-gehlenborg-blue px-3 py-2 text-left font-semibold text-white;
 }
 
 .table td {
   @apply border-b border-gray-200 px-3 py-2;
 }
 
-/* Input-Felder */
-input,
-select,
-textarea {
-  @apply border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gehlenborg-blue;
+.app-page table th,
+.app-page table td {
+  vertical-align: top;
 }
 
-/* Überschriften */
-h1,
-h2,
-h3 {
-  @apply text-gehlenborg-blue font-bold;
+.app-page table tbody tr {
+  transition: background-color 120ms ease;
 }
 
 /* =========================================================
-   📱 Punkt 4: Mobile Touch-Ziele groß, Desktop kompakt
-   - Ohne Komponenten-Code zu ändern
-   - Schont absolute Mini-Buttons (z.B. 🗑️)
+   Überschriften
 ========================================================= */
 
-/* 🔹 Mobil: größere Touch-Ziele & Schrift */
-@media (max-width: 768px) {
-  /* iOS-Zoom vermeiden & Touch-Fläche erhöhen */
+h1,
+h2,
+h3 {
+  @apply font-bold text-gehlenborg-blue;
+}
+
+/* =========================================================
+   Mobile und Tablet: klare Navigation, mehr Platz für Inhalte
+========================================================= */
+
+@media (max-width: 1023px) {
+  .app-mobile-header {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .app-content {
+    padding: 1rem 0.875rem 1.75rem;
+  }
+
+  /* Der Seitentitel steht mobil bereits im feststehenden Kopfbereich. */
+  .app-page > div > h1 {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .app-page > div > h1 + * {
+    margin-top: 0 !important;
+  }
+
+  .app-page > div > :is(section, div).bg-white:not(.fixed) {
+    border-radius: 0.875rem !important;
+  }
+}
+
+/* =========================================================
+   Smartphone: große Touch-Ziele und keine iOS-Vergrößerung
+========================================================= */
+
+@media (max-width: 767px) {
   input,
   select,
   textarea {
-    font-size: 16px !important;          /* verhindert iOS-Input-Zoom */
+    min-height: 44px;
+    padding-block: 0.75rem !important;
+    font-size: 16px !important;
     line-height: 1.2;
-    min-height: 44px;                     /* Mindest-Tap-Ziel */
-    padding-block: 0.75rem !important;    /* etwas mehr vertikal */
   }
 
-  /* Buttons vergrößern – aber nicht die absolut positionierten Overlay-Buttons (🗑️) */
-  button:not(.absolute),
+  button:not(.absolute):not(.app-header-action),
   .btn {
     min-height: 44px;
     padding-block: 0.75rem !important;
   }
 
-  /* Foto-Upload-Label (📷) als echtes 44×44-Tap-Ziel */
   label[for^="foto-input"] {
+    display: inline-flex !important;
     width: 44px !important;
     height: 44px !important;
-    display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    font-size: 20px; /* Emoji etwas größer */
-  }
-
-  /* Karten-/Sticky-Abstände etwas luftiger */
-  .sticky {
-    top: 0; /* sicherstellen, dass sticky-Header wirklich oben klebt */
+    font-size: 20px;
   }
 }
 
-/* 🔹 Desktop: leicht kompaktere Controls */
+/* =========================================================
+   Desktop: kompakte Eingaben, breiter Arbeitsbereich
+========================================================= */
+
 @media (min-width: 768px) {
   input,
   select,
   textarea {
-    padding-block: 0.5rem !important; /* dezent kompakter */
+    padding-block: 0.5rem !important;
     font-size: 0.95rem;
   }
+
   button:not(.absolute),
   .btn {
     padding-block: 0.5rem !important;
   }
 }
 
-/* 🔹 Allgemeine Kleinigkeiten */
-button,
-a,
-label {
-  -webkit-tap-highlight-color: transparent; /* angenehmeres Tap-Verhalten auf Mobil */
-  touch-action: manipulation;               /* schnellere Reaktionen auf Tap */
-}
-/* === DND-Fix für Tabellen (nur während Drag aktiv) === */
-.dnd-table-body.dragging {
-  display: block;                /* tbody wird blockig */
-}
-.dnd-table-body.dragging > tr {
-  display: flex;                 /* jede Zeile wird flexbar */
-  align-items: stretch;
-  width: max-content;            /* horizontales Scrollen bleibt funktional */
-}
-.dnd-table-body.dragging > tr > td,
-.dnd-table-body.dragging > tr > th {
-  display: block;                /* Zellen verhalten sich "blockig" */
+@media (min-width: 1024px) {
+  .app-content {
+    min-height: 100vh;
+  }
 }
 
-/* optionale Hilfsklassen für Spaltenbreiten im Drag-Modus */
-.dnd-col-handle { width: 40px; min-width: 40px; }
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* DND-Fix für Tabellen während eines aktiven Drag-Vorgangs */
+.dnd-table-body.dragging {
+  display: block;
+}
+
+.dnd-table-body.dragging > tr {
+  display: flex;
+  align-items: stretch;
+  width: max-content;
+}
+
+.dnd-table-body.dragging > tr > td,
+.dnd-table-body.dragging > tr > th {
+  display: block;
+}
+
+.dnd-col-handle {
+  width: 40px;
+  min-width: 40px;
+}
