@@ -159,6 +159,53 @@ function fmtDE(input) {
   }
 }
 
+// Lokales Datum im Format YYYY-MM-DD. Im Gegensatz zu toISOString() bleibt
+// der Kalendertag auch kurz nach Mitternacht in der deutschen Zeitzone korrekt.
+function localDateISO(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function datePartISO(input) {
+  const datePart = String(input || "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(datePart) ? datePart : "";
+}
+
+function dateFromISO(input) {
+  const datePart = datePartISO(input);
+  if (!datePart) return null;
+
+  const [year, month, day] = datePart.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function relativeTourDay(input) {
+  const tourDate = dateFromISO(input);
+  if (!tourDate) return "Geplante Tour";
+
+  const today = dateFromISO(localDateISO());
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+
+  if (localDateISO(tourDate) === localDateISO(today)) return "Heute";
+  if (localDateISO(tourDate) === localDateISO(tomorrow)) return "Morgen";
+
+  return tourDate.toLocaleDateString("de-DE", { weekday: "long" });
+}
+
+function sortUpcomingTouren(rows) {
+  return [...rows].sort((a, b) => {
+    const dateA = datePartISO(a?.datum);
+    const dateB = datePartISO(b?.datum);
+
+    if (dateA !== dateB) return dateA.localeCompare(dateB);
+    return Number(a?.id || 0) - Number(b?.id || 0);
+  });
+}
+
 // Robust gegen "YYYY-MM-DD" und komplette ISO-Strings
 function kwFromDateISO(input) {
   try {
@@ -427,8 +474,15 @@ export default function Tagestour() {
   const [fahrer, setFahrer] = useState([]);
   const [fahrerLoading, setFahrerLoading] = useState(true);
   const [selectedFahrer, setSelectedFahrer] = useState("");
-  const [datum, setDatum] = useState(() => new Date().toISOString().slice(0, 10));
+  const [datum, setDatum] = useState(() => localDateISO());
   const [tour, setTour] = useState(null);
+
+  // Tourauswahl für Fahrer: alle Touren ab dem heutigen Tag.
+  const [upcomingTouren, setUpcomingTouren] = useState([]);
+  const [upcomingLoading, setUpcomingLoading] = useState(false);
+  const [upcomingError, setUpcomingError] = useState("");
+  const [manualDateOpen, setManualDateOpen] = useState(false);
+  const [openingTourId, setOpeningTourId] = useState(null);
 
   const [stopps, setStopps] = useState([]); // rohe Stopps aus API
   const [startCoord, setStartCoord] = useState(null); // Koordinate Firma
@@ -460,6 +514,7 @@ export default function Tagestour() {
 
   const currentStopSectionRef = useRef(null);
   const loadRequestRef = useRef(0);
+  const upcomingRequestRef = useRef(0);
 
   const [isDesktopViewport, setIsDesktopViewport] = useState(() => {
     if (typeof window === "undefined") return true;
@@ -503,6 +558,18 @@ export default function Tagestour() {
   }, []);
 
   useEffect(() => {
+    if (!selectedFahrer) {
+      upcomingRequestRef.current += 1;
+      setUpcomingTouren([]);
+      setUpcomingError("");
+      setUpcomingLoading(false);
+      return;
+    }
+
+    void ladeKommendeTouren(selectedFahrer);
+  }, [selectedFahrer]);
+
+  useEffect(() => {
     const mediaQuery = window.matchMedia("(min-width: 1024px)");
     const handleChange = (event) => setIsDesktopViewport(event.matches);
 
@@ -540,6 +607,9 @@ export default function Tagestour() {
 
   useEffect(() => {
     return () => {
+      loadRequestRef.current += 1;
+      upcomingRequestRef.current += 1;
+
       Object.values(timersRef.current).forEach((timerId) => {
         window.clearTimeout(timerId);
       });
@@ -587,6 +657,50 @@ export default function Tagestour() {
     }
   }
 
+  async function ladeKommendeTouren(fahrerId = selectedFahrer) {
+    if (!fahrerId) {
+      setUpcomingTouren([]);
+      setUpcomingError("");
+      setUpcomingLoading(false);
+      return;
+    }
+
+    const requestId = upcomingRequestRef.current + 1;
+    upcomingRequestRef.current = requestId;
+    const today = localDateISO();
+
+    try {
+      setUpcomingLoading(true);
+      setUpcomingError("");
+
+      const data = await api.getTourenAdmin({
+        fahrer_id: fahrerId,
+        date_from: today,
+      });
+
+      if (upcomingRequestRef.current !== requestId) return;
+
+      const rows = (Array.isArray(data) ? data : []).filter((entry) => {
+        const entryDate = datePartISO(entry?.datum);
+        return entryDate && entryDate >= today;
+      });
+
+      setUpcomingTouren(sortUpcomingTouren(rows));
+    } catch (error) {
+      if (upcomingRequestRef.current !== requestId) return;
+
+      console.error("Kommende Touren konnten nicht geladen werden:", error);
+      setUpcomingTouren([]);
+      setUpcomingError(
+        getErrorMessage(error, "Die kommenden Touren konnten nicht geladen werden.")
+      );
+    } finally {
+      if (upcomingRequestRef.current === requestId) {
+        setUpcomingLoading(false);
+      }
+    }
+  }
+
   function clearTourData() {
     setTour(null);
     setStopps([]);
@@ -616,16 +730,27 @@ export default function Tagestour() {
 
   function handleFahrerChange(event) {
     const nextFahrer = event.target.value;
+
+    // Eine noch laufende Anfrage des vorherigen Fahrers darf die neue Liste
+    // nicht mehr überschreiben.
+    upcomingRequestRef.current += 1;
+
     setSelectedFahrer(nextFahrer);
     setStoredValue(LAST_DRIVER_KEY, nextFahrer);
+    setDatum(localDateISO());
+    setUpcomingTouren([]);
+    setUpcomingError("");
+    setUpcomingLoading(Boolean(nextFahrer));
+    setManualDateOpen(false);
+    setOpeningTourId(null);
     resetLoadedTour();
     setShowTourPicker(true);
   }
 
   function handleDatumChange(event) {
     setDatum(event.target.value);
-    resetLoadedTour();
-    setShowTourPicker(true);
+    setMsg("");
+    setMsgType("info");
   }
 
   function restoreActiveStop(loadedTour, loadedStopps) {
@@ -672,8 +797,28 @@ export default function Tagestour() {
     selectActiveStopp(stopps[activeStopIndex + 1].id, { scrollToTop: true });
   }
 
+  function openUpcomingTour(tourSummary) {
+    const selectedDate = datePartISO(tourSummary?.datum);
+
+    if (!selectedDate || !tourSummary?.id) {
+      setMsgType("error");
+      setMsg("Diese Tour konnte nicht eindeutig gelesen werden.");
+      return;
+    }
+
+    setDatum(selectedDate);
+    void ladeTourFuerDatum(selectedDate, tourSummary);
+  }
+
   async function ladeTour() {
-    if (!selectedFahrer || !datum) {
+    await ladeTourFuerDatum(datum);
+  }
+
+  async function ladeTourFuerDatum(targetDatum, sourceTour = null) {
+    const normalizedDatum = datePartISO(targetDatum);
+    const sourceTourId = sourceTour?.id || null;
+
+    if (!selectedFahrer || !normalizedDatum) {
       setMsgType("info");
       setMsg("Bitte wählen Sie zuerst einen Fahrer und ein Datum aus.");
       setShowTourPicker(true);
@@ -684,13 +829,24 @@ export default function Tagestour() {
     loadRequestRef.current = requestId;
 
     setLoading(true);
+    setOpeningTourId(sourceTourId);
     setMapLoading(false);
     setMsg("");
     setMsgType("info");
     clearTourData();
 
     try {
-      const data = await api.getTour(selectedFahrer, datum);
+      let data;
+
+      if (sourceTourId) {
+        const loadedStopps = await api.getStoppsByTour(sourceTourId);
+        data = {
+          tour: sourceTour,
+          stopps: Array.isArray(loadedStopps) ? loadedStopps : [],
+        };
+      } else {
+        data = await api.getTour(selectedFahrer, normalizedDatum);
+      }
 
       if (loadRequestRef.current !== requestId) return;
 
@@ -701,7 +857,7 @@ export default function Tagestour() {
         setMsgType("info");
         setMsg(
           `Für ${selectedDriver?.name || "diesen Fahrer"} am ${fmtDE(
-            datum
+            normalizedDatum
           )} wurde keine Tour gefunden.`
         );
         setShowTourPicker(true);
@@ -712,12 +868,13 @@ export default function Tagestour() {
       setStopps(loadedStopps);
       setStartCoord(FIRMA_COORDS);
       setShowTourPicker(false);
+      setManualDateOpen(false);
       restoreActiveStop(loadedTour, loadedStopps);
       setStoredValue(LAST_DRIVER_KEY, selectedFahrer);
       setMsgType("success");
       setMsg(
         `Die Tour für ${selectedDriver?.name || "den Fahrer"} am ${fmtDE(
-          loadedTour.datum || datum
+          loadedTour.datum || normalizedDatum
         )} wurde geladen.`
       );
 
@@ -816,7 +973,16 @@ export default function Tagestour() {
     } finally {
       if (loadRequestRef.current === requestId) {
         setLoading(false);
+        setOpeningTourId(null);
       }
+    }
+  }
+
+  function openTourPicker() {
+    setShowTourPicker(true);
+
+    if (selectedFahrer) {
+      void ladeKommendeTouren(selectedFahrer);
     }
   }
 
@@ -1119,7 +1285,7 @@ export default function Tagestour() {
         onClose={() => setMsg("")}
       />
 
-      {/* Tourauswahl: nach dem Laden auf Mobilgeräten bewusst kompakt ausblendbar. */}
+      {/* Tourauswahl: Fahrer wählen, danach erscheinen automatisch alle Touren ab heute. */}
       {showTourPicker || !tour ? (
         <section className="space-y-5 bg-white p-4 shadow sm:p-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1131,7 +1297,7 @@ export default function Tagestour() {
                 <div>
                   <h2 className="text-xl font-semibold text-[#0058A3]">Tour öffnen</h2>
                   <p className="mt-0.5 text-sm text-gray-600">
-                    Fahrer und Tag auswählen, anschließend die Tour laden.
+                    Fahrer auswählen. Danach erscheinen automatisch alle Touren ab heute.
                   </p>
                 </div>
               </div>
@@ -1149,77 +1315,287 @@ export default function Tagestour() {
             ) : null}
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-[minmax(220px,1fr)_minmax(190px,0.7fr)_auto] lg:items-end">
-            <div>
-              <label
-                htmlFor="tagestour-fahrer"
-                className="mb-1.5 block text-sm font-semibold text-gray-700"
-              >
-                Fahrer
-              </label>
-              <div className="relative">
-                <UserRound
-                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-                  size={18}
-                  aria-hidden="true"
-                />
-                <select
-                  id="tagestour-fahrer"
-                  className="w-full pl-10"
-                  value={selectedFahrer}
-                  onChange={handleFahrerChange}
-                  disabled={fahrerLoading || loading}
-                >
-                  <option value="">
-                    {fahrerLoading ? "Fahrer werden geladen…" : "– Fahrer auswählen –"}
-                  </option>
-                  {fahrer.map((entry) => (
-                    <option key={entry.id} value={entry.id}>
-                      {entry.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label
-                htmlFor="tagestour-datum"
-                className="mb-1.5 block text-sm font-semibold text-gray-700"
-              >
-                Datum
-              </label>
-              <div className="relative">
-                <CalendarDays
-                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-                  size={18}
-                  aria-hidden="true"
-                />
-                <input
-                  id="tagestour-datum"
-                  type="date"
-                  className="w-full pl-10"
-                  value={datum}
-                  onChange={handleDatumChange}
-                  disabled={loading}
-                />
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={ladeTour}
-              disabled={loading || fahrerLoading || !selectedFahrer || !datum}
-              className="inline-flex w-full min-w-[170px] items-center justify-center gap-2 rounded-xl bg-[#0058A3] px-5 py-3 font-semibold text-white transition hover:bg-[#003F75] disabled:opacity-60 lg:w-auto"
+          <div className="max-w-2xl">
+            <label
+              htmlFor="tagestour-fahrer"
+              className="mb-1.5 block text-sm font-semibold text-gray-700"
             >
-              {loading ? (
-                <Loader2 className="animate-spin" size={19} aria-hidden="true" />
-              ) : (
-                <RefreshCw size={19} aria-hidden="true" />
-              )}
-              {loading ? "Tour wird geladen…" : "Tour laden"}
-            </button>
+              Fahrer
+            </label>
+            <div className="relative">
+              <UserRound
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                size={18}
+                aria-hidden="true"
+              />
+              <select
+                id="tagestour-fahrer"
+                className="w-full pl-10"
+                value={selectedFahrer}
+                onChange={handleFahrerChange}
+                disabled={fahrerLoading || loading}
+              >
+                <option value="">
+                  {fahrerLoading ? "Fahrer werden geladen…" : "– Namen auswählen –"}
+                </option>
+                {fahrer.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
+
+          {!selectedFahrer ? (
+            <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-7 text-center">
+              <UserRound className="mx-auto text-gray-400" size={30} aria-hidden="true" />
+              <div className="mt-3 font-semibold text-gray-800">Bitte Namen auswählen</div>
+              <p className="mt-1 text-sm leading-5 text-gray-500">
+                Anschließend werden alle geplanten Touren für heute und die Zukunft angezeigt.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4 border-t border-gray-200 pt-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="flex items-center gap-2 text-lg font-semibold text-[#0058A3]">
+                    <CalendarDays size={20} aria-hidden="true" />
+                    Kommende Touren für {selectedDriverName}
+                  </h3>
+                  <p className="mt-1 text-sm text-gray-600">
+                    Angezeigt werden alle Touren ab heute. Die nächste Tour steht oben.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => ladeKommendeTouren(selectedFahrer)}
+                  disabled={upcomingLoading || loading}
+                  className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-gray-100 px-4 py-2.5 text-sm font-semibold text-gray-800 transition hover:bg-gray-200 disabled:opacity-60 sm:w-auto"
+                >
+                  <RefreshCw
+                    className={upcomingLoading ? "animate-spin" : ""}
+                    size={17}
+                    aria-hidden="true"
+                  />
+                  Aktualisieren
+                </button>
+              </div>
+
+              {upcomingLoading ? (
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" aria-live="polite">
+                  {[1, 2, 3].map((item) => (
+                    <div
+                      key={item}
+                      className="min-h-[150px] animate-pulse rounded-2xl border border-gray-200 bg-gray-50 p-4"
+                    >
+                      <div className="h-4 w-20 rounded bg-gray-200" />
+                      <div className="mt-3 h-7 w-36 rounded bg-gray-200" />
+                      <div className="mt-4 h-4 w-full rounded bg-gray-200" />
+                      <div className="mt-2 h-4 w-2/3 rounded bg-gray-200" />
+                    </div>
+                  ))}
+                </div>
+              ) : upcomingError ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-800">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="mt-0.5 shrink-0" size={19} aria-hidden="true" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm leading-5">{upcomingError}</div>
+                      <button
+                        type="button"
+                        onClick={() => ladeKommendeTouren(selectedFahrer)}
+                        className="mt-3 inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-red-800 ring-1 ring-inset ring-red-200 transition hover:bg-red-100"
+                      >
+                        <RefreshCw size={16} aria-hidden="true" />
+                        Erneut versuchen
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : upcomingTouren.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center">
+                  <CalendarDays className="mx-auto text-gray-400" size={32} aria-hidden="true" />
+                  <div className="mt-3 font-semibold text-gray-800">
+                    Keine kommenden Touren vorhanden
+                  </div>
+                  <p className="mt-1 text-sm leading-5 text-gray-500">
+                    Für {selectedDriverName} ist ab heute aktuell keine Tour geplant.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {upcomingTouren.map((entry) => {
+                    const entryDate = datePartISO(entry.datum);
+                    const dayLabel = relativeTourDay(entry.datum);
+                    const isToday = entryDate === localDateISO();
+                    const isOpen = String(tour?.id) === String(entry.id);
+                    const isOpening =
+                      loading && String(openingTourId) === String(entry.id);
+                    const stopCount = Number(entry.stopps_count || 0);
+
+                    return (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        onClick={() => {
+                          if (isOpen) {
+                            setShowTourPicker(false);
+                          } else {
+                            openUpcomingTour(entry);
+                          }
+                        }}
+                        disabled={loading}
+                        className={`group flex min-h-[166px] w-full flex-col rounded-2xl border p-4 text-left shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0058A3]/40 disabled:cursor-wait disabled:opacity-70 ${
+                          isOpen
+                            ? "border-green-300 bg-green-50"
+                            : isToday
+                            ? "border-[#0058A3] bg-[#E8F1FA]/55 hover:bg-[#E8F1FA]"
+                            : "border-gray-200 bg-white hover:border-[#0058A3]/50 hover:bg-blue-50/40 hover:shadow-md"
+                        }`}
+                      >
+                        <span className="flex w-full items-start justify-between gap-3">
+                          <span className="min-w-0">
+                            <span
+                              className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                                isOpen
+                                  ? "bg-green-100 text-green-800"
+                                  : isToday
+                                  ? "bg-[#0058A3] text-white"
+                                  : "bg-gray-100 text-gray-700"
+                              }`}
+                            >
+                              {isOpen ? "Geöffnet" : dayLabel}
+                            </span>
+                            <span className="mt-2 block text-xl font-bold text-gray-900">
+                              {fmtDE(entry.datum)}
+                            </span>
+                          </span>
+
+                          <span
+                            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition ${
+                              isOpen
+                                ? "bg-green-600 text-white"
+                                : "bg-[#E8F1FA] text-[#0058A3] group-hover:bg-[#0058A3] group-hover:text-white"
+                            }`}
+                          >
+                            {isOpening ? (
+                              <Loader2 className="animate-spin" size={20} aria-hidden="true" />
+                            ) : isOpen ? (
+                              <CheckCircle2 size={20} aria-hidden="true" />
+                            ) : (
+                              <ArrowRight size={20} aria-hidden="true" />
+                            )}
+                          </span>
+                        </span>
+
+                        <span className="mt-4 flex flex-wrap items-center gap-2 text-sm text-gray-700">
+                          <span className="inline-flex items-center gap-1.5 font-semibold">
+                            <ClipboardList size={16} className="text-[#0058A3]" aria-hidden="true" />
+                            {stopCount} {stopCount === 1 ? "Stopp" : "Stopps"}
+                          </span>
+                          {entry.kunden_preview ? (
+                            <span className="text-gray-400" aria-hidden="true">•</span>
+                          ) : null}
+                          {entry.kunden_preview ? (
+                            <span className="min-w-0 break-words text-gray-600">
+                              {entry.kunden_preview}
+                            </span>
+                          ) : null}
+                        </span>
+
+                        {entry.bemerkung ? (
+                          <span className="mt-3 line-clamp-2 break-words text-xs leading-5 text-gray-500">
+                            {entry.bemerkung}
+                          </span>
+                        ) : null}
+
+                        <span className="mt-auto pt-4 text-sm font-semibold text-[#0058A3]">
+                          {isOpening
+                            ? "Tour wird geladen…"
+                            : isOpen
+                            ? "Zur geöffneten Tour"
+                            : "Tour öffnen"}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {selectedFahrer ? (
+            <div className="border-t border-gray-200 pt-4">
+              <button
+                type="button"
+                onClick={() => setManualDateOpen((current) => !current)}
+                className="flex w-full items-center justify-between gap-3 rounded-xl bg-gray-50 px-4 py-3 text-left text-sm font-semibold text-gray-800 transition hover:bg-gray-100"
+                aria-expanded={manualDateOpen}
+              >
+                <span className="flex items-center gap-2">
+                  <CalendarDays size={18} className="text-[#0058A3]" aria-hidden="true" />
+                  Tour über ein bestimmtes Datum suchen
+                </span>
+                <ChevronDown
+                  className={`shrink-0 transition ${manualDateOpen ? "rotate-180" : ""}`}
+                  size={18}
+                  aria-hidden="true"
+                />
+              </button>
+
+              {manualDateOpen ? (
+                <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                  <p className="mb-3 text-sm leading-5 text-gray-600">
+                    Nur nötig, wenn eine vergangene Tour oder ein ganz bestimmter Tag geöffnet werden soll.
+                  </p>
+
+                  <div className="grid gap-3 sm:grid-cols-[minmax(190px,280px)_auto] sm:items-end">
+                    <div>
+                      <label
+                        htmlFor="tagestour-datum"
+                        className="mb-1.5 block text-sm font-semibold text-gray-700"
+                      >
+                        Datum
+                      </label>
+                      <div className="relative">
+                        <CalendarDays
+                          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                          size={18}
+                          aria-hidden="true"
+                        />
+                        <input
+                          id="tagestour-datum"
+                          type="date"
+                          className="w-full pl-10"
+                          value={datum}
+                          onChange={handleDatumChange}
+                          disabled={loading}
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={ladeTour}
+                      disabled={loading || !datum}
+                      className="inline-flex w-full min-w-[180px] items-center justify-center gap-2 rounded-xl bg-[#0058A3] px-5 py-3 font-semibold text-white transition hover:bg-[#003F75] disabled:opacity-60 sm:w-auto"
+                    >
+                      {loading && openingTourId === null ? (
+                        <Loader2 className="animate-spin" size={19} aria-hidden="true" />
+                      ) : (
+                        <RefreshCw size={19} aria-hidden="true" />
+                      )}
+                      {loading && openingTourId === null
+                        ? "Tour wird geladen…"
+                        : "Datum laden"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="flex items-start gap-2 rounded-xl bg-blue-50 px-3 py-2.5 text-sm leading-5 text-blue-800">
             <Info className="mt-0.5 shrink-0" size={17} aria-hidden="true" />
@@ -1290,7 +1666,7 @@ export default function Tagestour() {
 
                 <button
                   type="button"
-                  onClick={() => setShowTourPicker(true)}
+                  onClick={openTourPicker}
                   className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-white/10 px-4 py-3 text-sm font-semibold text-white ring-1 ring-inset ring-white/25 transition hover:bg-white/20"
                 >
                   <RefreshCw size={19} aria-hidden="true" />
