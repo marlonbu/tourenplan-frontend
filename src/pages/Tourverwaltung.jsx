@@ -76,6 +76,59 @@ function getStatusKey(rawDate, todayISO) {
   return "heute";
 }
 
+function compareTourFallback(a, b) {
+  const driverComparison = String(a?.fahrer_name || "").localeCompare(
+    String(b?.fahrer_name || ""),
+    "de",
+    { sensitivity: "base" }
+  );
+
+  if (driverComparison !== 0) return driverComparison;
+  return Number(a?.id || 0) - Number(b?.id || 0);
+}
+
+function sortTourenByDate(rows, tab, todayISO) {
+  return [...rows].sort((a, b) => {
+    const dateA = toDateISO(a?.datum);
+    const dateB = toDateISO(b?.datum);
+
+    if (!dateA && !dateB) return compareTourFallback(a, b);
+    if (!dateA) return 1;
+    if (!dateB) return -1;
+
+    if (tab === "vergangen") {
+      if (dateA !== dateB) return dateB.localeCompare(dateA);
+      return compareTourFallback(a, b);
+    }
+
+    if (tab === "zukuenftig") {
+      if (dateA !== dateB) return dateA.localeCompare(dateB);
+      return compareTourFallback(a, b);
+    }
+
+    const groupForDate = (dateISO) => {
+      if (dateISO === todayISO) return 0;
+      if (dateISO > todayISO) return 1;
+      return 2;
+    };
+
+    const groupA = groupForDate(dateA);
+    const groupB = groupForDate(dateB);
+
+    if (groupA !== groupB) return groupA - groupB;
+
+    if (groupA === 1 && dateA !== dateB) {
+      return dateA.localeCompare(dateB);
+    }
+
+    if (groupA === 2 && dateA !== dateB) {
+      return dateB.localeCompare(dateA);
+    }
+
+    return compareTourFallback(a, b);
+  });
+}
+
 function getErrorMessage(error, fallbackMessage) {
   if (error?.code === "NETWORK_ERROR") {
     return "Der Server ist momentan nicht erreichbar. Bitte prüfen Sie die Internetverbindung und versuchen Sie es erneut.";
@@ -454,15 +507,15 @@ export default function Tourverwaltung() {
   }, [touren, todayISO]);
 
   const tourenGefiltert = useMemo(() => {
+    let rows = touren;
+
     if (tab === "zukuenftig") {
-      return touren.filter((tour) => getStatusKey(tour.datum, todayISO) === "zukuenftig");
+      rows = rows.filter((tour) => getStatusKey(tour.datum, todayISO) === "zukuenftig");
+    } else if (tab === "vergangen") {
+      rows = rows.filter((tour) => getStatusKey(tour.datum, todayISO) === "vergangen");
     }
 
-    if (tab === "vergangen") {
-      return touren.filter((tour) => getStatusKey(tour.datum, todayISO) === "vergangen");
-    }
-
-    return touren;
+    return sortTourenByDate(rows, tab, todayISO);
   }, [touren, tab, todayISO]);
 
   const visibleStopCount = useMemo(
@@ -1294,6 +1347,17 @@ export default function Tourverwaltung() {
               <strong className="text-gray-900">{statusCounts.heute}</strong> heute
             </span>
           </div>
+        </div>
+
+        <div className="flex items-start gap-2 rounded-xl bg-gray-50 px-3 py-2.5 text-xs leading-5 text-gray-600">
+          <CalendarDays className="mt-0.5 shrink-0" size={16} aria-hidden="true" />
+          <span>
+            {tab === "zukuenftig"
+              ? "Automatisch nach Datum sortiert: Die zeitlich nächste Tour steht oben."
+              : tab === "vergangen"
+              ? "Automatisch nach Datum sortiert: Die zuletzt vergangene Tour steht oben."
+              : "Automatisch nach Datum sortiert: Heute steht oben, danach folgen die nächsten Touren. Vergangene Touren werden mit der zuletzt gefahrenen zuerst angezeigt."}
+          </span>
         </div>
       </section>
 
