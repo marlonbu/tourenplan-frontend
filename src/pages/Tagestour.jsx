@@ -202,6 +202,14 @@ function sortUpcomingTouren(rows) {
     const dateB = datePartISO(b?.datum);
 
     if (dateA !== dateB) return dateA.localeCompare(dateB);
+
+    const driverComparison = String(a?.fahrer_name || "").localeCompare(
+      String(b?.fahrer_name || ""),
+      "de",
+      { sensitivity: "base" }
+    );
+
+    if (driverComparison !== 0) return driverComparison;
     return Number(a?.id || 0) - Number(b?.id || 0);
   });
 }
@@ -479,7 +487,7 @@ export default function Tagestour() {
 
   // Tourauswahl für Fahrer: alle Touren ab dem heutigen Tag.
   const [upcomingTouren, setUpcomingTouren] = useState([]);
-  const [upcomingLoading, setUpcomingLoading] = useState(false);
+  const [upcomingLoading, setUpcomingLoading] = useState(true);
   const [upcomingError, setUpcomingError] = useState("");
   const [manualDateOpen, setManualDateOpen] = useState(false);
   const [openingTourId, setOpeningTourId] = useState(null);
@@ -529,8 +537,9 @@ export default function Tagestour() {
 
   const selectedDriverName =
     selectedDriver?.name ||
+    tour?.fahrer_name ||
     fahrer.find((entry) => String(entry.id) === String(tour?.fahrer_id))?.name ||
-    "Fahrer nicht gefunden";
+    (selectedFahrer ? "Fahrer nicht gefunden" : "Alle Fahrer");
 
   const activeStopIndex = useMemo(() => {
     if (stopps.length === 0) return -1;
@@ -558,14 +567,6 @@ export default function Tagestour() {
   }, []);
 
   useEffect(() => {
-    if (!selectedFahrer) {
-      upcomingRequestRef.current += 1;
-      setUpcomingTouren([]);
-      setUpcomingError("");
-      setUpcomingLoading(false);
-      return;
-    }
-
     void ladeKommendeTouren(selectedFahrer);
   }, [selectedFahrer]);
 
@@ -658,13 +659,6 @@ export default function Tagestour() {
   }
 
   async function ladeKommendeTouren(fahrerId = selectedFahrer) {
-    if (!fahrerId) {
-      setUpcomingTouren([]);
-      setUpcomingError("");
-      setUpcomingLoading(false);
-      return;
-    }
-
     const requestId = upcomingRequestRef.current + 1;
     upcomingRequestRef.current = requestId;
     const today = localDateISO();
@@ -674,7 +668,7 @@ export default function Tagestour() {
       setUpcomingError("");
 
       const data = await api.getTourenAdmin({
-        fahrer_id: fahrerId,
+        fahrer_id: fahrerId || undefined,
         date_from: today,
       });
 
@@ -740,7 +734,7 @@ export default function Tagestour() {
     setDatum(localDateISO());
     setUpcomingTouren([]);
     setUpcomingError("");
-    setUpcomingLoading(Boolean(nextFahrer));
+    setUpcomingLoading(true);
     setManualDateOpen(false);
     setOpeningTourId(null);
     resetLoadedTour();
@@ -799,26 +793,39 @@ export default function Tagestour() {
 
   function openUpcomingTour(tourSummary) {
     const selectedDate = datePartISO(tourSummary?.datum);
+    const tourDriverId = String(tourSummary?.fahrer_id || "");
 
-    if (!selectedDate || !tourSummary?.id) {
+    if (!selectedDate || !tourSummary?.id || !tourDriverId) {
       setMsgType("error");
       setMsg("Diese Tour konnte nicht eindeutig gelesen werden.");
       return;
     }
 
+    setSelectedFahrer(tourDriverId);
+    setStoredValue(LAST_DRIVER_KEY, tourDriverId);
     setDatum(selectedDate);
-    void ladeTourFuerDatum(selectedDate, tourSummary);
+    void ladeTourFuerDatum(selectedDate, tourSummary, tourDriverId);
   }
 
   async function ladeTour() {
     await ladeTourFuerDatum(datum);
   }
 
-  async function ladeTourFuerDatum(targetDatum, sourceTour = null) {
+  async function ladeTourFuerDatum(
+    targetDatum,
+    sourceTour = null,
+    fahrerId = selectedFahrer
+  ) {
     const normalizedDatum = datePartISO(targetDatum);
+    const normalizedFahrerId = String(fahrerId || sourceTour?.fahrer_id || "");
     const sourceTourId = sourceTour?.id || null;
+    const driverName =
+      sourceTour?.fahrer_name ||
+      fahrer.find((entry) => String(entry.id) === normalizedFahrerId)?.name ||
+      selectedDriver?.name ||
+      "diesen Fahrer";
 
-    if (!selectedFahrer || !normalizedDatum) {
+    if (!normalizedFahrerId || !normalizedDatum) {
       setMsgType("info");
       setMsg("Bitte wählen Sie zuerst einen Fahrer und ein Datum aus.");
       setShowTourPicker(true);
@@ -845,7 +852,7 @@ export default function Tagestour() {
           stopps: Array.isArray(loadedStopps) ? loadedStopps : [],
         };
       } else {
-        data = await api.getTour(selectedFahrer, normalizedDatum);
+        data = await api.getTour(normalizedFahrerId, normalizedDatum);
       }
 
       if (loadRequestRef.current !== requestId) return;
@@ -856,7 +863,7 @@ export default function Tagestour() {
       if (!loadedTour) {
         setMsgType("info");
         setMsg(
-          `Für ${selectedDriver?.name || "diesen Fahrer"} am ${fmtDE(
+          `Für ${driverName} am ${fmtDE(
             normalizedDatum
           )} wurde keine Tour gefunden.`
         );
@@ -864,16 +871,17 @@ export default function Tagestour() {
         return;
       }
 
+      setSelectedFahrer(normalizedFahrerId);
       setTour(loadedTour);
       setStopps(loadedStopps);
       setStartCoord(FIRMA_COORDS);
       setShowTourPicker(false);
       setManualDateOpen(false);
       restoreActiveStop(loadedTour, loadedStopps);
-      setStoredValue(LAST_DRIVER_KEY, selectedFahrer);
+      setStoredValue(LAST_DRIVER_KEY, normalizedFahrerId);
       setMsgType("success");
       setMsg(
-        `Die Tour für ${selectedDriver?.name || "den Fahrer"} am ${fmtDE(
+        `Die Tour für ${driverName} am ${fmtDE(
           loadedTour.datum || normalizedDatum
         )} wurde geladen.`
       );
@@ -980,10 +988,7 @@ export default function Tagestour() {
 
   function openTourPicker() {
     setShowTourPicker(true);
-
-    if (selectedFahrer) {
-      void ladeKommendeTouren(selectedFahrer);
-    }
+    void ladeKommendeTouren(selectedFahrer);
   }
 
   // ---- Fotos laden/aktualisieren ----
@@ -1285,7 +1290,7 @@ export default function Tagestour() {
         onClose={() => setMsg("")}
       />
 
-      {/* Tourauswahl: Fahrer wählen, danach erscheinen automatisch alle Touren ab heute. */}
+      {/* Tourauswahl: Ohne Fahrerauswahl werden alle Touren ab heute angezeigt. */}
       {showTourPicker || !tour ? (
         <section className="space-y-5 bg-white p-4 shadow sm:p-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1297,7 +1302,7 @@ export default function Tagestour() {
                 <div>
                   <h2 className="text-xl font-semibold text-[#0058A3]">Tour öffnen</h2>
                   <p className="mt-0.5 text-sm text-gray-600">
-                    Fahrer auswählen. Danach erscheinen automatisch alle Touren ab heute.
+                    Alle Fahrer anzeigen oder einen Namen auswählen. Danach kann die gewünschte Tour direkt geöffnet werden.
                   </p>
                 </div>
               </div>
@@ -1336,7 +1341,7 @@ export default function Tagestour() {
                 disabled={fahrerLoading || loading}
               >
                 <option value="">
-                  {fahrerLoading ? "Fahrer werden geladen…" : "– Namen auswählen –"}
+                  {fahrerLoading ? "Alle Fahrer – Namen werden geladen…" : "Alle Fahrer"}
                 </option>
                 {fahrer.map((entry) => (
                   <option key={entry.id} value={entry.id}>
@@ -1347,24 +1352,19 @@ export default function Tagestour() {
             </div>
           </div>
 
-          {!selectedFahrer ? (
-            <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-7 text-center">
-              <UserRound className="mx-auto text-gray-400" size={30} aria-hidden="true" />
-              <div className="mt-3 font-semibold text-gray-800">Bitte Namen auswählen</div>
-              <p className="mt-1 text-sm leading-5 text-gray-500">
-                Anschließend werden alle geplanten Touren für heute und die Zukunft angezeigt.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-4 border-t border-gray-200 pt-5">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-4 border-t border-gray-200 pt-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h3 className="flex items-center gap-2 text-lg font-semibold text-[#0058A3]">
                     <CalendarDays size={20} aria-hidden="true" />
-                    Kommende Touren für {selectedDriverName}
+                    {selectedFahrer
+                      ? `Kommende Touren für ${selectedDriverName}`
+                      : "Alle kommenden Touren"}
                   </h3>
                   <p className="mt-1 text-sm text-gray-600">
-                    Angezeigt werden alle Touren ab heute. Die nächste Tour steht oben.
+                    {selectedFahrer
+                      ? "Angezeigt werden alle Touren dieses Fahrers ab heute. Die nächste Tour steht oben."
+                      : "Angezeigt werden alle Touren aller Fahrer ab heute. Die nächste Tour steht oben."}
                   </p>
                 </div>
 
@@ -1381,9 +1381,9 @@ export default function Tagestour() {
                   />
                   Aktualisieren
                 </button>
-              </div>
+            </div>
 
-              {upcomingLoading ? (
+            {upcomingLoading ? (
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" aria-live="polite">
                   {[1, 2, 3].map((item) => (
                     <div
@@ -1421,7 +1421,9 @@ export default function Tagestour() {
                     Keine kommenden Touren vorhanden
                   </div>
                   <p className="mt-1 text-sm leading-5 text-gray-500">
-                    Für {selectedDriverName} ist ab heute aktuell keine Tour geplant.
+                    {selectedFahrer
+                      ? `Für ${selectedDriverName} ist ab heute aktuell keine Tour geplant.`
+                      : "Ab heute sind aktuell keine Touren geplant."}
                   </p>
                 </div>
               ) : (
@@ -1447,7 +1449,7 @@ export default function Tagestour() {
                           }
                         }}
                         disabled={loading}
-                        className={`group flex min-h-[166px] w-full flex-col rounded-2xl border p-4 text-left shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0058A3]/40 disabled:cursor-wait disabled:opacity-70 ${
+                        className={`group flex min-h-[178px] w-full flex-col rounded-2xl border p-4 text-left shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0058A3]/40 disabled:cursor-wait disabled:opacity-70 ${
                           isOpen
                             ? "border-green-300 bg-green-50"
                             : isToday
@@ -1490,7 +1492,14 @@ export default function Tagestour() {
                           </span>
                         </span>
 
-                        <span className="mt-4 flex flex-wrap items-center gap-2 text-sm text-gray-700">
+                        {!selectedFahrer ? (
+                          <span className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-[#0058A3]">
+                            <UserRound size={16} aria-hidden="true" />
+                            {entry.fahrer_name || "Ohne Fahrer"}
+                          </span>
+                        ) : null}
+
+                        <span className={`${selectedFahrer ? "mt-4" : "mt-3"} flex flex-wrap items-center gap-2 text-sm text-gray-700`}>
                           <span className="inline-flex items-center gap-1.5 font-semibold">
                             <ClipboardList size={16} className="text-[#0058A3]" aria-hidden="true" />
                             {stopCount} {stopCount === 1 ? "Stopp" : "Stopps"}
@@ -1522,9 +1531,8 @@ export default function Tagestour() {
                     );
                   })}
                 </div>
-              )}
-            </div>
-          )}
+            )}
+          </div>
 
           {selectedFahrer ? (
             <div className="border-t border-gray-200 pt-4">
@@ -1599,8 +1607,9 @@ export default function Tagestour() {
 
           <div className="flex items-start gap-2 rounded-xl bg-blue-50 px-3 py-2.5 text-sm leading-5 text-blue-800">
             <Info className="mt-0.5 shrink-0" size={17} aria-hidden="true" />
-            Der zuletzt verwendete Fahrer wird auf diesem Gerät für den nächsten Start
-            vorgemerkt. Er kann jederzeit geändert werden.
+            {selectedFahrer
+              ? "Der ausgewählte Fahrer wird auf diesem Gerät für den nächsten Start vorgemerkt. Über die Auswahl kann jederzeit wieder ‚Alle Fahrer‘ angezeigt werden."
+              : "Aktuell werden alle Fahrer angezeigt. Beim Öffnen einer Tour wird der zugehörige Fahrer auf diesem Gerät für den nächsten Start vorgemerkt."}
           </div>
         </section>
       ) : null}
