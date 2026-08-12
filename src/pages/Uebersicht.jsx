@@ -87,6 +87,59 @@ function getStatusKey(rawDate, todayISO) {
   return "heute";
 }
 
+function compareTourFallback(a, b) {
+  const driverComparison = String(a?.fahrer_name || "").localeCompare(
+    String(b?.fahrer_name || ""),
+    "de",
+    { sensitivity: "base" }
+  );
+
+  if (driverComparison !== 0) return driverComparison;
+  return Number(a?.id || 0) - Number(b?.id || 0);
+}
+
+function sortTourenByDate(rows, tab, todayISO) {
+  return [...rows].sort((a, b) => {
+    const dateA = toDateISO(a?.datum);
+    const dateB = toDateISO(b?.datum);
+
+    if (!dateA && !dateB) return compareTourFallback(a, b);
+    if (!dateA) return 1;
+    if (!dateB) return -1;
+
+    if (tab === "vergangen") {
+      if (dateA !== dateB) return dateB.localeCompare(dateA);
+      return compareTourFallback(a, b);
+    }
+
+    if (tab === "zukuenftig") {
+      if (dateA !== dateB) return dateA.localeCompare(dateB);
+      return compareTourFallback(a, b);
+    }
+
+    const groupForDate = (dateISO) => {
+      if (dateISO === todayISO) return 0;
+      if (dateISO > todayISO) return 1;
+      return 2;
+    };
+
+    const groupA = groupForDate(dateA);
+    const groupB = groupForDate(dateB);
+
+    if (groupA !== groupB) return groupA - groupB;
+
+    if (groupA === 1 && dateA !== dateB) {
+      return dateA.localeCompare(dateB);
+    }
+
+    if (groupA === 2 && dateA !== dateB) {
+      return dateB.localeCompare(dateA);
+    }
+
+    return compareTourFallback(a, b);
+  });
+}
+
 function getErrorMessage(error, fallbackMessage) {
   if (error?.code === "NETWORK_ERROR") {
     return "Der Server ist momentan nicht erreichbar. Bitte prüfen Sie die Internetverbindung und versuchen Sie es erneut.";
@@ -218,10 +271,10 @@ function FilterChip({ children, onRemove }) {
   );
 }
 
-function SortableRow({ children, id, disabled = false }) {
+function SortableRow({ children, id, disabled = false, showHandle = true }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
-    disabled,
+    disabled: disabled || !showHandle,
   });
 
   const style = {
@@ -239,28 +292,30 @@ function SortableRow({ children, id, disabled = false }) {
         isDragging ? "opacity-80 ring-2 ring-inset ring-[#0058A3]" : ""
       }`}
     >
-      <td className="dnd-col-handle w-[48px] border-b border-gray-200 px-2 py-3 text-center text-gray-400">
-        <button
-          type="button"
-          {...attributes}
-          {...listeners}
-          disabled={disabled}
-          className="inline-flex h-9 w-9 cursor-grab items-center justify-center rounded-lg hover:bg-gray-100 hover:text-[#0058A3] active:cursor-grabbing disabled:cursor-not-allowed"
-          aria-label="Tour verschieben"
-          title="Ziehen, um die Reihenfolge zu ändern"
-        >
-          <GripVertical size={18} aria-hidden="true" />
-        </button>
-      </td>
+      {showHandle ? (
+        <td className="dnd-col-handle w-[48px] border-b border-gray-200 px-2 py-3 text-center text-gray-400">
+          <button
+            type="button"
+            {...attributes}
+            {...listeners}
+            disabled={disabled}
+            className="inline-flex h-9 w-9 cursor-grab items-center justify-center rounded-lg hover:bg-gray-100 hover:text-[#0058A3] active:cursor-grabbing disabled:cursor-not-allowed"
+            aria-label="Tour verschieben"
+            title="Ziehen, um die Reihenfolge zu ändern"
+          >
+            <GripVertical size={18} aria-hidden="true" />
+          </button>
+        </td>
+      ) : null}
       {children}
     </tr>
   );
 }
 
-function SortableCard({ id, children, disabled = false }) {
+function SortableCard({ id, children, disabled = false, showHandle = true }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
-    disabled,
+    disabled: disabled || !showHandle,
   });
 
   const style = {
@@ -278,20 +333,24 @@ function SortableCard({ id, children, disabled = false }) {
         isDragging ? "border-[#0058A3] opacity-85 ring-2 ring-[#0058A3]/30" : "border-gray-200"
       }`}
     >
-      <div className="flex items-start gap-3">
-        <button
-          type="button"
-          {...attributes}
-          {...listeners}
-          disabled={disabled}
-          className="inline-flex h-10 w-10 shrink-0 cursor-grab items-center justify-center rounded-xl bg-gray-100 text-gray-500 hover:bg-[#E8F1FA] hover:text-[#0058A3] active:cursor-grabbing disabled:cursor-not-allowed"
-          aria-label="Tour verschieben"
-          title="Ziehen, um die Reihenfolge zu ändern"
-        >
-          <GripVertical size={20} aria-hidden="true" />
-        </button>
-        <div className="min-w-0 flex-1">{children}</div>
-      </div>
+      {showHandle ? (
+        <div className="flex items-start gap-3">
+          <button
+            type="button"
+            {...attributes}
+            {...listeners}
+            disabled={disabled}
+            className="inline-flex h-10 w-10 shrink-0 cursor-grab items-center justify-center rounded-xl bg-gray-100 text-gray-500 hover:bg-[#E8F1FA] hover:text-[#0058A3] active:cursor-grabbing disabled:cursor-not-allowed"
+            aria-label="Tour verschieben"
+            title="Ziehen, um die Reihenfolge zu ändern"
+          >
+            <GripVertical size={20} aria-hidden="true" />
+          </button>
+          <div className="min-w-0 flex-1">{children}</div>
+        </div>
+      ) : (
+        <div className="min-w-0">{children}</div>
+      )}
     </article>
   );
 }
@@ -489,11 +548,13 @@ export default function Uebersicht() {
   // Tab-Ansicht: alle | zukuenftig | vergangen
   const [tab, setTab] = useState("alle");
 
-  // Drag-and-drop
+  // Sortierung und Drag-and-drop
+  const [sortMode, setSortMode] = useState("date");
   const [ordered, setOrdered] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [reorderSaving, setReorderSaving] = useState(false);
-  const isDraggingTable = activeId !== null;
+  const isManualSort = sortMode === "manual";
+  const isDraggingTable = isManualSort && activeId !== null;
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -640,6 +701,10 @@ export default function Uebersicht() {
       rows = rows.filter((tour) => getStatusKey(tour.datum, todayISO) === "vergangen");
     }
 
+    if (!isManualSort) {
+      return sortTourenByDate(rows, tab, todayISO);
+    }
+
     const visibleSet = new Set(rows.map((tour) => tour.id));
     const mapById = new Map(rows.map((tour) => [tour.id, tour]));
     const sortedRows = ordered
@@ -650,7 +715,7 @@ export default function Uebersicht() {
     const missingRows = rows.filter((tour) => !sortedIds.has(tour.id));
 
     return [...sortedRows, ...missingRows];
-  }, [touren, tab, todayISO, ordered]);
+  }, [touren, tab, todayISO, ordered, isManualSort]);
 
   const visibleStopCount = useMemo(
     () =>
@@ -732,6 +797,7 @@ export default function Uebersicht() {
   }
 
   function handleDragStart(event) {
+    if (!isManualSort) return;
     setActiveId(event.active.id);
   }
 
@@ -739,7 +805,7 @@ export default function Uebersicht() {
     const { active, over } = event;
     setActiveId(null);
 
-    if (!over || active.id === over.id || reorderSaving) return;
+    if (!isManualSort || !over || active.id === over.id || reorderSaving) return;
 
     const visibleIds = gefiltert.map((tour) => tour.id);
     const oldIndex = visibleIds.indexOf(active.id);
@@ -772,6 +838,12 @@ export default function Uebersicht() {
 
   function handleDragCancel() {
     setActiveId(null);
+  }
+
+  function changeSortMode(nextMode) {
+    if (reorderSaving || nextMode === sortMode) return;
+    setActiveId(null);
+    setSortMode(nextMode);
   }
 
   const tabOptions = [
@@ -988,12 +1060,53 @@ export default function Uebersicht() {
           </div>
         </div>
 
-        <div className="flex items-start gap-2 rounded-xl bg-gray-50 px-3 py-2.5 text-xs leading-5 text-gray-600">
-          <GripVertical className="mt-0.5 shrink-0" size={16} aria-hidden="true" />
-          <span>
-            Die Touren können am Griff verschoben werden. Die gespeicherte Reihenfolge gilt auch nach dem erneuten Laden.
-            {reorderSaving ? " Reihenfolge wird gerade gespeichert..." : ""}
-          </span>
+        <div className="flex flex-col gap-3 rounded-xl bg-gray-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="inline-flex w-full rounded-xl bg-white p-1 ring-1 ring-inset ring-gray-200 sm:w-auto">
+            <button
+              type="button"
+              onClick={() => changeSortMode("date")}
+              disabled={reorderSaving}
+              className={`inline-flex min-h-[40px] flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none ${
+                !isManualSort
+                  ? "bg-[#0058A3] text-white shadow-sm"
+                  : "text-gray-700 hover:bg-gray-100"
+              }`}
+              aria-pressed={!isManualSort}
+            >
+              <CalendarDays size={17} aria-hidden="true" />
+              Nach Datum
+            </button>
+
+            <button
+              type="button"
+              onClick={() => changeSortMode("manual")}
+              disabled={reorderSaving}
+              className={`inline-flex min-h-[40px] flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none ${
+                isManualSort
+                  ? "bg-[#0058A3] text-white shadow-sm"
+                  : "text-gray-700 hover:bg-gray-100"
+              }`}
+              aria-pressed={isManualSort}
+            >
+              <GripVertical size={17} aria-hidden="true" />
+              Manuell sortieren
+            </button>
+          </div>
+
+          <div className="flex min-w-0 items-start gap-2 text-xs leading-5 text-gray-600 sm:max-w-2xl sm:text-right">
+            {isManualSort ? (
+              <GripVertical className="mt-0.5 shrink-0" size={16} aria-hidden="true" />
+            ) : (
+              <CalendarDays className="mt-0.5 shrink-0" size={16} aria-hidden="true" />
+            )}
+            <span>
+              {isManualSort
+                ? `Die Touren können am Griff verschoben werden. Die gespeicherte Reihenfolge bleibt erhalten.${
+                    reorderSaving ? " Reihenfolge wird gerade gespeichert..." : ""
+                  }`
+                : "Heute steht oben. Danach folgen die nächsten Touren; vergangene Touren werden mit der zuletzt gefahrenen zuerst angezeigt."}
+            </span>
+          </div>
         </div>
       </section>
 
@@ -1046,7 +1159,8 @@ export default function Uebersicht() {
                     <SortableCard
                       key={tour.id}
                       id={tour.id}
-                      disabled={reorderSaving || loading}
+                      disabled={reorderSaving || loading || !isManualSort}
+                      showHandle={isManualSort}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -1132,7 +1246,16 @@ export default function Uebersicht() {
               <Loader2 className="animate-spin" size={14} aria-hidden="true" />
               Reihenfolge wird gespeichert
             </span>
-          ) : null}
+          ) : (
+            <span className="inline-flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1.5 text-xs font-semibold text-gray-700">
+              {isManualSort ? (
+                <GripVertical size={14} aria-hidden="true" />
+              ) : (
+                <CalendarDays size={14} aria-hidden="true" />
+              )}
+              {isManualSort ? "Manuelle Reihenfolge" : "Nach Datum sortiert"}
+            </span>
+          )}
         </div>
 
         {loading ? (
@@ -1173,12 +1296,16 @@ export default function Uebersicht() {
               strategy={verticalListSortingStrategy}
             >
               <div className="overflow-x-auto rounded-xl border border-gray-200">
-                <table className="min-w-[1120px] w-full border-collapse text-sm">
+                <table
+                  className={`${isManualSort ? "min-w-[1120px]" : "min-w-[1070px]"} w-full border-collapse text-sm`}
+                >
                   <thead className="bg-[#0058A3] text-white">
                     <tr>
-                      <th className="w-[48px] border-r border-white/15 px-2 py-3 text-center">
-                        <span className="sr-only">Reihenfolge</span>
-                      </th>
+                      {isManualSort ? (
+                        <th className="w-[48px] border-r border-white/15 px-2 py-3 text-center">
+                          <span className="sr-only">Reihenfolge</span>
+                        </th>
+                      ) : null}
                       <th className="w-[135px] border-r border-white/15 px-3 py-3 text-left">Datum</th>
                       <th className="w-[210px] border-r border-white/15 px-3 py-3 text-left">Fahrer</th>
                       <th className="w-[90px] border-r border-white/15 px-3 py-3 text-left">Stopps</th>
@@ -1197,7 +1324,8 @@ export default function Uebersicht() {
                         <React.Fragment key={tour.id}>
                           <SortableRow
                             id={tour.id}
-                            disabled={reorderSaving || loading}
+                            disabled={reorderSaving || loading || !isManualSort}
+                            showHandle={isManualSort}
                           >
                             <td className="w-[135px] border-b border-gray-200 px-3 py-3 font-medium text-gray-900">
                               {fmtDate(tour.datum)}
@@ -1240,7 +1368,7 @@ export default function Uebersicht() {
 
                           {!isDraggingTable && stoppsAreOpen ? (
                             <tr className="dnd-row-stopps bg-gray-50">
-                              <td colSpan={7} className="border-b border-gray-200 px-4 py-4">
+                              <td colSpan={isManualSort ? 7 : 6} className="border-b border-gray-200 px-4 py-4">
                                 <div className="mb-3 flex items-center justify-between gap-3">
                                   <div>
                                     <div className="font-semibold text-gray-900">
